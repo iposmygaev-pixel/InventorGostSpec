@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>InventorGostSpec.Pdf</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PDFsharp" Version="6.2.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Шрифт по умолчанию — поставляется вместе с утилитой. -->
+    <None Include="Fonts\*.ttf" CopyToOutputDirectory="PreserveNewest" LinkBase="Fonts" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="InventorGostSpec.Pdf.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\InventorGostSpec.Excel\InventorGostSpec.Excel.csproj" />
+  </ItemGroup>
+
+</Project>

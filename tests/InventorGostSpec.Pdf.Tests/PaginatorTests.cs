@@ -1,0 +1,142 @@
+using InventorGostSpec.Excel;
+
+namespace InventorGostSpec.Pdf.Tests;
+
+public class PaginatorTests
+{
+    // Моноширинная «метрика»: 2 мм на символ — графа «Наименование» (61 мм) вмещает 30 символов.
+    private static double Measure(string text, double capHeight) => text.Length * 2.0;
+
+    private static SheetRow Item(string name, string position = "", string designation = "") =>
+        new(ExcelFormat.RowTypes.Item, "", "", position, designation, name, "1", "", "");
+
+    private static SheetRow Section(string name) => new(ExcelFormat.RowTypes.Section, "", "", "", "", name, "", "", "");
+
+    [Fact]
+    public void Standard_designation_is_not_split_between_lines()
+    {
+        var lines = SpecPaginator.Wrap("Заклепка 3,2x8 AlA/St ГОСТ Р ИСО 15973-2005", 30 * 2, Measure);
+
+        Assert.Equal(new[] { "Заклепка 3,2x8 AlA/St", "ГОСТ Р ИСО 15973-2005" }, lines);
+    }
+
+    [Fact]
+    public void Slightly_long_text_is_compressed_instead_of_wrapped()
+    {
+        // 34 символа = 68 мм в графе 60 мм: сжатие до 88 % — переносить не нужно.
+        Assert.Single(SpecPaginator.Wrap("Гайка барашек DIN 315 - M8 - St - C", 60, Measure));
+
+        // 45 символов = 90 мм: сжатия до 80 % не хватает — перенос.
+        Assert.Equal(2, SpecPaginator.Wrap("Гайка барашек DIN 315 - M8 - St - C, оцинкован", 60, Measure).Count);
+    }
+
+    [Fact]
+    public void Reserve_rows_are_free_lines_without_position()
+    {
+        var reserve = new SheetRow(ExcelFormat.RowTypes.Reserve, "", "", "3", "", "", "", "", "");
+
+        var page = Assert.Single(SpecPaginator.Paginate(new[] { Item("Корпус", "1"), reserve, Item("Крышка", "4") }, Measure));
+
+        Assert.Equal(new[] { "1", "", "4" }, page.Select(l => l.Position));
+        Assert.True(page[1].IsBlank);
+    }
+
+    [Fact]
+    public void Each_reserve_row_adds_a_line_to_the_free_line_before_next_section()
+    {
+        var reserve = new SheetRow(ExcelFormat.RowTypes.Reserve, "", "", "3", "", "", "", "", "");
+
+        var page = Assert.Single(SpecPaginator.Paginate(
+            new[] { Section("Сборочные единицы"), Item("Привод", "1"), reserve, reserve, Section("Детали"), Item("Корпус", "4") }, Measure));
+
+        // Между разделами — свободная строка и ещё по строке на каждый резерв.
+        Assert.Equal(new[] { "", "Сборочные единицы", "", "Привод", "", "", "", "Детали", "", "Корпус" }, page.Select(l => l.Name));
+
+        // Без резерва — одна свободная строка перед заголовком.
+        page = Assert.Single(SpecPaginator.Paginate(new[] { Item("Привод", "1"), Section("Детали"), Item("Корпус", "4") }, Measure));
+        Assert.Equal(new[] { "Привод", "", "Детали", "", "Корпус" }, page.Select(l => l.Name));
+    }
+
+    [Fact]
+    public void Line_does_not_start_with_a_dash()
+    {
+        var lines = SpecPaginator.Wrap("Гайка барашек DIN 315 - M8 - St - C", 24 * 2, Measure);
+
+        Assert.Equal(new[] { "Гайка барашек DIN 315 -", "M8 - St - C" }, lines);
+    }
+
+    [Fact]
+    public void Long_words_stay_whole_and_explicit_line_breaks_are_kept()
+    {
+        Assert.Equal(new[] { "АБВГ.301234.001-01АБВГ.301234.001" }, SpecPaginator.Wrap("АБВГ.301234.001-01АБВГ.301234.001", 20, Measure));
+        Assert.Equal(new[] { "Первая", "Вторая" }, SpecPaginator.Wrap("Первая\nВторая", 100, Measure));
+    }
+
+    [Fact]
+    public void Section_gets_free_lines_around_it_also_at_top_of_sheet()
+    {
+        var pages = SpecPaginator.Paginate(new[] { Section("Детали"), Item("Корпус", "1"), Section("Стандартные изделия"), Item("Болт", "2") }, Measure);
+
+        var page = Assert.Single(pages);
+        // Над заголовком всегда свободная строка: первый раздел начинается со второй строки листа.
+        Assert.Equal(new[] { "", "Детали", "", "Корпус", "", "Стандартные изделия", "", "Болт" }, page.Select(l => l.Name));
+        Assert.Equal(LineStyle.Section, page[1].Style);
+    }
+
+    [Fact]
+    public void Section_header_is_not_left_at_bottom_of_sheet()
+    {
+        // 26 изделий + заголовок раздела: на первом листе 29 строк, заголовок с пустой строкой и первым изделием не помещается.
+        var rows = new List<SheetRow> { Section("Детали") };
+        rows.AddRange(Enumerable.Range(1, 26).Select(i => Item($"Деталь {i}", i.ToString())));
+        rows.Add(Section("Стандартные изделия"));
+        rows.Add(Item("Болт", "27"));
+
+        var pages = SpecPaginator.Paginate(rows, Measure);
+
+        Assert.Equal(2, pages.Count);
+        Assert.Equal("Деталь 26", pages[0][^1].Name);
+        Assert.Equal(new[] { "", "Стандартные изделия", "", "Болт" }, pages[1].Select(l => l.Name));
+    }
+
+    [Fact]
+    public void Multiline_item_is_kept_on_one_sheet()
+    {
+        var rows = Enumerable.Range(1, 28).Select(i => Item($"Деталь {i}", i.ToString())).ToList();
+        rows.Add(Item("Очень длинное наименование изделия, которое не помещается в одну строку", "29"));
+
+        var pages = SpecPaginator.Paginate(rows, Measure);
+
+        Assert.Equal(28, pages[0].Count);
+        Assert.Equal("29", pages[1][0].Position);
+        Assert.True(pages[1].Count > 1);
+        Assert.All(pages[1].Skip(1), line => Assert.Equal("", line.Position));
+    }
+
+    [Fact]
+    public void Sheets_hold_29_and_then_32_lines_and_quantity_carries_unit()
+    {
+        var rows = Enumerable.Range(1, 70).Select(i => Item($"Деталь {i}", i.ToString())).ToList();
+        rows[0] = rows[0] with { Quantity = "2,5", Unit = "м" };
+
+        var pages = SpecPaginator.Paginate(rows, Measure);
+
+        Assert.Equal(new[] { 29, 32, 9 }, pages.Select(p => p.Count));
+        Assert.Equal("2,5 м", pages[0][0].Quantity);
+    }
+
+    [Theory]
+    [InlineData("2", 2, true)]
+    [InlineData("2", 1, false)]
+    [InlineData("1-3", 3, true)]
+    [InlineData("1, 4", 4, true)]
+    [InlineData("1, 4", 2, false)]
+    [InlineData("", 1, true)]
+    [InlineData("", 2, true)]
+    [InlineData("Все", 1, true)]
+    [InlineData("все", 3, true)]
+    public void Change_record_sheet_numbers(string sheets, int sheet, bool expected)
+    {
+        Assert.Equal(expected, GostPdfWriter.SheetMatches(sheets, sheet));
+    }
+}

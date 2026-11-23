@@ -1,0 +1,159 @@
+using InventorGostSpec.Core.Model;
+using InventorGostSpec.Core.Parsing;
+using InventorGostSpec.Core.Sections;
+
+namespace InventorGostSpec.Core.Sorting;
+
+/// <summary>Порядок строк внутри раздела по ГОСТ 2.106-2019.</summary>
+public sealed class GostRowComparer : IComparer<SpecRow>
+{
+    private readonly SortRule _rule;
+
+    public GostRowComparer(SortRule rule)
+    {
+        _rule = rule;
+    }
+
+    public int Compare(SpecRow? x, SpecRow? y)
+    {
+        if (ReferenceEquals(x, y))
+        {
+            return 0;
+        }
+
+        if (x is null)
+        {
+            return -1;
+        }
+
+        if (y is null)
+        {
+            return 1;
+        }
+
+        // Группа сортировки (по умолчанию 0), заданная вручную, важнее правил ГОСТ: меньше — выше.
+        var byGroup = x.SortGroup.CompareTo(y.SortGroup);
+        if (byGroup != 0)
+        {
+            return byGroup;
+        }
+
+        var result = _rule switch
+        {
+            SortRule.Documentation => CompareDocuments(x, y),
+            SortRule.ByDesignation => CompareByDesignation(x, y),
+            SortRule.StandardProducts => CompareStandardProducts(x, y),
+            SortRule.OtherProducts => CompareOtherProducts(x, y),
+            SortRule.Materials => CompareMaterials(x, y),
+            SortRule.ByName => 0,
+            _ => 0,
+        };
+
+        return result != 0 ? result : CompareFallback(x, y);
+    }
+
+    private static int CompareDocuments(SpecRow x, SpecRow y) =>
+        First(
+            DocumentCodes.Compare(x.Get(SpecColumn.Designation), y.Get(SpecColumn.Designation)),
+            () => NaturalComparer.CompareEmptyLast(x.Get(SpecColumn.Designation), y.Get(SpecColumn.Designation)));
+
+    private static int CompareByDesignation(SpecRow x, SpecRow y) =>
+        NaturalComparer.CompareEmptyLast(x.Get(SpecColumn.Designation), y.Get(SpecColumn.Designation));
+
+    /// <summary>
+    /// Категория стандарта → группа по назначению → тип изделия (для ГОСТ) →
+    /// обозначение стандарта → полное наименование → основные параметры.
+    /// </summary>
+    private static int CompareStandardProducts(SpecRow x, SpecRow y)
+    {
+        var fx = SortFields.Of(x);
+        var fy = SortFields.Of(y);
+        return First(
+            StandardCategories.SortRank(fx.StandardNumber).CompareTo(StandardCategories.SortRank(fy.StandardNumber)),
+            () => NaturalComparer.CompareEmptyLast(fx.Group, fy.Group),
+            // Внутри ГОСТ уточнение головки не должно опережать номер стандарта:
+            // «Винт со ... 7045» → «Винт с ... 7380» → «Винт ... 11738».
+            () => NaturalComparer.CompareEmptyLast(StandardProductType(fx), StandardProductType(fy)),
+            () => NaturalComparer.CompareEmptyLast(
+                StandardCategories.StripPrefix(fx.StandardNumber),
+                StandardCategories.StripPrefix(fy.StandardNumber)),
+            () => NaturalComparer.CompareEmptyLast(fx.SortName, fy.SortName),
+            () => NaturalComparer.CompareEmptyLast(fx.Parameters, fy.Parameters));
+    }
+
+    private static string StandardProductType(SortFields fields)
+    {
+        // Меняем только ГОСТ / ГОСТ Р; остальные категории сохраняют полное наименование.
+        if (StandardCategories.Categorize(fields.StandardNumber) is not
+            (StandardCategory.Interstate or StandardCategory.National))
+        {
+            return fields.SortName;
+        }
+
+        // Первое слово — тип изделия; дефисные названия («Рым-болт») остаются целыми.
+        return fields.SortName.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+    }
+
+    /// <summary>Однородная группа → наименование → основные параметры.</summary>
+    private static int CompareOtherProducts(SpecRow x, SpecRow y)
+    {
+        var fx = SortFields.Of(x);
+        var fy = SortFields.Of(y);
+        return First(
+            NaturalComparer.CompareEmptyLast(fx.Group, fy.Group),
+            () => NaturalComparer.CompareEmptyLast(fx.SortName, fy.SortName),
+            () => NaturalComparer.CompareEmptyLast(fx.Parameters, fy.Parameters));
+    }
+
+    /// <summary>Вид материала → наименование → параметры.</summary>
+    private static int CompareMaterials(SpecRow x, SpecRow y)
+    {
+        var fx = SortFields.Of(x);
+        var fy = SortFields.Of(y);
+        return First(
+            MaterialKinds.Parse(x.Source.MaterialKind).CompareTo(MaterialKinds.Parse(y.Source.MaterialKind)),
+            () => NaturalComparer.CompareEmptyLast(fx.SortName, fy.SortName),
+            () => NaturalComparer.CompareEmptyLast(fx.Parameters, fy.Parameters));
+    }
+
+    private static int CompareFallback(SpecRow x, SpecRow y) =>
+        First(
+            NaturalComparer.CompareEmptyLast(x.Get(SpecColumn.Name), y.Get(SpecColumn.Name)),
+            () => NaturalComparer.CompareEmptyLast(x.Get(SpecColumn.Designation), y.Get(SpecColumn.Designation)));
+
+    private static int First(int result, params Func<int>[] next)
+    {
+        foreach (var compare in next)
+        {
+            if (result != 0)
+            {
+                return result;
+            }
+
+            result = compare();
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Поля сортировки строки. Незаполненные поля берутся из разбора наименования,
+    /// например, для изделий, добавленных вручную.
+    /// </summary>
+    private sealed record SortFields(string Group, string SortName, string StandardNumber, string Parameters)
+    {
+        public static SortFields Of(SpecRow row)
+        {
+            var source = row.Source;
+            var parsed = StandardDesignationParser.Parse(row.Get(SpecColumn.Name));
+
+            // Стандарт — из наименования, которое видно в спецификации: SPEC_StandardNumber мог остаться
+            // от старого наименования (например, «ISO …» вместо «ГОСТ ISO …»). Свойство — только если в наименовании стандарта нет.
+            var standard = parsed.StandardNumber.Length > 0 ? parsed.StandardNumber : source.StandardNumber;
+            var sortName = source.SortName.Length > 0 ? source.SortName : parsed.Name;
+            var parameters = source.Parameters.Length > 0 ? source.Parameters : parsed.Parameters;
+
+            return new SortFields(source.Group, sortName, standard, parameters);
+        }
+    }
+}

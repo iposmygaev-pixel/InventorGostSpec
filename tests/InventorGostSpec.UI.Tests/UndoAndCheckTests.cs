@@ -1,0 +1,1035 @@
+using InventorGostSpec.Core.Model;
+using InventorGostSpec.Core.Sections;
+using InventorGostSpec.UI.ViewModels;
+
+namespace InventorGostSpec.UI.Tests;
+
+public class UndoAndCheckTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    public UndoAndCheckTests()
+    {
+        _host.Settings.DefaultReserves[SectionIds.Parts] = new ReserveSettings { Count = 1 };
+        _host.Components.AddRange(new[]
+        {
+            new ComponentData { Key = "b.ipt", Kind = ComponentKind.Part, Designation = "А.002", Name = "Ось", Format = "А4", SectionId = SectionIds.Parts, Quantity = 1 },
+            new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "А.001", Name = "Корпус", Format = "А3", SectionId = SectionIds.Parts, Quantity = 1 },
+        });
+    }
+
+    /// <summary>Сохранённая спецификация (окно открыто без изменений).</summary>
+    private SpecificationViewModel Open()
+    {
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    private static SpecRowViewModel RowByName(SpecificationViewModel vm, string name) => vm.Rows.Single(r => r.Name == name);
+
+    private static string[] Names(SpecificationViewModel vm) =>
+        vm.Rows.Where(r => r.Row is not null).Select(r => r.Name).ToArray();
+
+    [Fact]
+    public void Undo_and_redo_cell_edits()
+    {
+        var vm = Open();
+        Assert.False(vm.UndoCommand.CanExecute(null));
+
+        RowByName(vm, "Корпус").Note = "Литьё";
+        RowByName(vm, "Корпус").Zone = "B3";
+        Assert.True(vm.IsDirty);
+
+        vm.UndoCommand.Execute(null);
+        Assert.Equal("", RowByName(vm, "Корпус").Zone);
+        Assert.Equal("Литьё", RowByName(vm, "Корпус").Note);
+
+        vm.UndoCommand.Execute(null);
+        Assert.Equal("", RowByName(vm, "Корпус").Note);
+        Assert.False(vm.IsDirty); // вернулись к сохранённому состоянию
+        Assert.False(vm.UndoCommand.CanExecute(null));
+
+        vm.RedoCommand.Execute(null);
+        vm.RedoCommand.Execute(null);
+        Assert.Equal("B3", RowByName(vm, "Корпус").Zone);
+        Assert.True(vm.IsDirty);
+        Assert.False(vm.RedoCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void New_change_clears_redo()
+    {
+        var vm = Open();
+        RowByName(vm, "Корпус").Note = "Литьё";
+        vm.UndoCommand.Execute(null);
+        Assert.True(vm.RedoCommand.CanExecute(null));
+
+        RowByName(vm, "Ось").Note = "Покупная";
+
+        Assert.False(vm.RedoCommand.CanExecute(null));
+        Assert.Contains("1", vm.UndoToolTip);
+    }
+
+    [Fact]
+    public void Undo_restores_order_after_gost_sort_and_deleted_rows()
+    {
+        var vm = Open();
+        vm.SelectedRow = RowByName(vm, "Ось");
+        vm.MoveDownCommand.Execute(null);
+        Assert.Equal(new[] { "Корпус", "Ось" }, Names(vm));
+
+        vm.ResetCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.Equal(new[] { "Корпус", "Ось" }, Names(vm));
+
+        vm.SelectedRow = RowByName(vm, "Корпус");
+        vm.AddItemCommand.Execute(null);
+        var manual = vm.SelectedRow!.RowId;
+        vm.DeleteRowCommand.Execute(null);
+        Assert.DoesNotContain(vm.Rows, r => r.RowId == manual);
+
+        vm.UndoCommand.Execute(null);
+        Assert.Contains(vm.Rows, r => r.RowId == manual);
+    }
+
+    [Fact]
+    public void Undo_after_save_marks_window_dirty_and_keeps_selection()
+    {
+        var vm = Open();
+        RowByName(vm, "Корпус").Note = "Литьё";
+        vm.SaveCommand.Execute(null);
+        Assert.False(vm.IsDirty);
+        vm.SelectedRow = RowByName(vm, "Ось");
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.True(vm.IsDirty);
+        Assert.Equal("Ось", vm.SelectedRow!.Name);
+        vm.RedoCommand.Execute(null);
+        Assert.False(vm.IsDirty);
+    }
+
+    [Fact]
+    public void Undo_covers_groups_reserves_and_update_from_assembly()
+    {
+        var vm = Open();
+        _dialogs.OnGroup = g => g.Title = "Изделия, устанавливаемые по МЭ";
+        vm.AddGroupCommand.Execute(null);
+        Assert.Contains(vm.Rows, r => r.IsGroupHeader);
+
+        vm.ShowReserveRows = false;
+        _host.Components.RemoveAt(0);
+        vm.UpdateFromAssemblyCommand.Execute(null);
+        Assert.True(RowByName(vm, "Ось").IsRemoved);
+
+        vm.UndoCommand.Execute(null);
+        Assert.False(RowByName(vm, "Ось").IsRemoved);
+        vm.UndoCommand.Execute(null);
+        Assert.True(vm.ShowReserveRows);
+        vm.UndoCommand.Execute(null);
+        Assert.DoesNotContain(vm.Rows, r => r.IsGroupHeader);
+    }
+
+    [Fact]
+    public void Undo_history_is_limited()
+    {
+        var vm = Open();
+        for (var i = 0; i < SpecificationViewModel.UndoLimit + 20; i++)
+        {
+            RowByName(vm, "Корпус").Note = i.ToString();
+        }
+
+        var steps = 0;
+        while (vm.UndoCommand.CanExecute(null))
+        {
+            vm.UndoCommand.Execute(null);
+            steps++;
+        }
+
+        Assert.Equal(SpecificationViewModel.UndoLimit, steps);
+        Assert.Equal("19", RowByName(vm, "Корпус").Note);
+    }
+
+    [Fact]
+    public void Check_without_issues_says_so()
+    {
+        _host.Components.Add(new ComponentData
+        {
+            Key = "drawing:Привод.idw", Kind = ComponentKind.Document, Designation = "А.000СБ", Name = "Сборочный чертеж", Format = "А1",
+        });
+        var vm = Open();
+        _host.BomItemNumbers = new() { ["a.ipt"] = "1", ["b.ipt"] = "2" };
+        _host.Title = () => new TitleBlock { Designation = "А.000", Name = "Узел", Developer = "Иванов", Checker = "Петров" };
+
+        vm.CheckCommand.Execute(null);
+
+        Assert.Null(_dialogs.LastCheck);
+        Assert.Contains("Замечаний нет.", _dialogs.Infos);
+    }
+
+    [Fact]
+    public void Check_lists_issues_and_goes_to_selected_row()
+    {
+        var vm = Open();
+        RowByName(vm, "Ось").Name = "";
+        vm.SearchText = "Корпус";
+        _host.BomItemNumbers = null; // BOM недоступна — проверка всё равно выполняется
+        _dialogs.OnCheck = check => check.SelectedItem!.RowId;
+
+        vm.CheckCommand.Execute(null);
+
+        var check = _dialogs.LastCheck!;
+        Assert.StartsWith("Ошибок: 1", check.Summary);
+        Assert.True(check.Items[0].IsError);
+        Assert.Contains("нет наименования", check.Items[0].Message);
+        Assert.Equal("", vm.SearchText);
+        Assert.Equal(check.Items[0].RowId, vm.SelectedRow!.RowId);
+        Assert.Single(_host.Errors);
+    }
+
+    [Fact]
+    public void Check_view_model_allows_going_only_to_rows()
+    {
+        var check = new CheckViewModel(new[]
+        {
+            new Core.Checking.SpecIssue(Core.Checking.IssueSeverity.Warning, "Основная надпись: не заполнено наименование."),
+            new Core.Checking.SpecIssue(Core.Checking.IssueSeverity.Info, "Строка", "row"),
+        });
+
+        Assert.False(check.CanGoToRow);
+        Assert.Null(check.RowToShow);
+        check.SelectedItem = check.Items[1];
+        Assert.Equal("row", check.RowToShow);
+        Assert.Equal("Замечание", check.Items[1].SeverityText);
+    }
+
+    [Fact]
+    public void Pdf_with_errors_asks_before_creating()
+    {
+        var vm = Open();
+        RowByName(vm, "Ось").Name = "";
+        _dialogs.ConfirmAnswer = false;
+
+        vm.ExportPdfCommand.Execute(null);
+
+        Assert.Empty(_host.PdfCalls);
+    }
+}
+
+public class InsertSectionTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    private SpecificationViewModel Open()
+    {
+        _host.Components.Add(new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "А.001", Name = "Корпус", Quantity = 1 });
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    [Fact]
+    public void Missing_sections_are_offered_and_inserted_with_reserve()
+    {
+        var vm = Open();
+        vm.ShowReserveRows = false;
+        var offered = vm.InsertableSections().Select(o => o.Id).ToList();
+        Assert.Contains(SectionIds.Documentation, offered);
+        Assert.DoesNotContain(SectionIds.Parts, offered);
+
+        vm.InsertSectionCommand.Execute(SectionIds.Documentation);
+
+        Assert.True(vm.ShowReserveRows);
+        Assert.Equal("Документация", vm.SelectedRow!.Name);
+        Assert.Equal(SpecificationViewModel.InsertedSectionReserve, vm.Rows.Count(r => r.IsReserve && r.SectionId == SectionIds.Documentation));
+        Assert.Contains("Вставлен раздел «Документация»", vm.StatusText);
+        Assert.DoesNotContain(SectionIds.Documentation, vm.InsertableSections().Select(o => o.Id));
+        Assert.False(vm.InsertSectionCommand.CanExecute(SectionIds.Documentation));
+    }
+
+    [Fact]
+    public void Drawing_row_is_added_into_inserted_documentation_and_empty_section_can_be_removed()
+    {
+        var vm = Open();
+        vm.InsertSectionCommand.Execute(SectionIds.Documentation);
+        Assert.True(vm.HideSectionCommand.CanExecute(null));
+
+        vm.AddItemCommand.Execute(null);
+        var drawing = vm.SelectedRow!;
+        Assert.Equal(SectionIds.Documentation, drawing.SectionId);
+        Assert.Equal("", drawing.Position);
+
+        vm.SelectedRow = vm.Rows.First(r => r.IsHeader && r.SectionId == SectionIds.Documentation);
+        Assert.False(vm.HideSectionCommand.CanExecute(null)); // в разделе уже есть строка
+
+        vm.UndoCommand.Execute(null);
+        vm.SelectedRow = vm.Rows.First(r => r.IsHeader && r.SectionId == SectionIds.Documentation);
+        vm.HideSectionCommand.Execute(null);
+        Assert.DoesNotContain(vm.Rows, r => r.SectionId == SectionIds.Documentation);
+    }
+
+    [Fact]
+    public void Existing_reserve_is_kept_and_numbers_hint_is_given()
+    {
+        _host.Settings.DefaultReserves[SectionIds.StandardProducts] = new ReserveSettings { Count = 2 };
+        var vm = Open();
+
+        vm.InsertSectionCommand.Execute(SectionIds.StandardProducts);
+
+        Assert.Equal(2, vm.Specification.ReserveOverrides.TryGetValue(SectionIds.StandardProducts, out var r) ? r.Count : 2);
+        Assert.Equal(2, vm.Rows.Count(x => x.IsReserve && x.SectionId == SectionIds.StandardProducts));
+        Assert.DoesNotContain("Перенумеровать", vm.StatusText);
+    }
+}
+
+public class DrawingFormatTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    public DrawingFormatTests()
+    {
+        _host.Components.AddRange(new[]
+        {
+            new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "А.001", Name = "Корпус", Quantity = 1 },
+            new ComponentData { Key = "b.ipt", Kind = ComponentKind.Part, Designation = "А.002", Name = "Ось", Format = "А4", Quantity = 1 },
+            new ComponentData { Key = "c.ipt", Kind = ComponentKind.Part, Designation = "А.003", Name = "Вал", Quantity = 1 },
+            new ComponentData { Key = "u.iam", Kind = ComponentKind.Assembly, Designation = "Б.001", Name = "Узел", Quantity = 1 },
+        });
+    }
+
+    private SpecificationViewModel Open()
+    {
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    [Fact]
+    public void Formats_of_part_drawings_are_written_to_parts_only()
+    {
+        _host.Drawings["a.ipt"] = "А1, А2х3, А2";
+        _host.Drawings["b.ipt"] = "А4";
+        _host.Drawings["u.iam"] = "А1";
+        var vm = Open();
+
+        vm.DrawingFormatsCommand.Execute(null);
+
+        Assert.Equal(new[] { "a.ipt", "b.ipt", "c.ipt" }, _host.DrawingRequests.Single().OrderBy(k => k));
+        Assert.Equal("А1, А2х3, А2", vm.Rows.Single(r => r.Name == "Корпус").Format);
+        Assert.Equal("А1, А2х3, А2", _host.Properties["a.ipt"][Core.Storage.PropertyNames.Format]);
+        Assert.False(_host.Properties.ContainsKey("b.ipt")); // формат уже такой
+        Assert.False(_host.Properties.ContainsKey("u.iam"));
+
+        // Вал без чертежа — «БЧ».
+        Assert.Equal("БЧ", vm.Rows.Single(r => r.Name == "Вал").Format);
+        Assert.Equal("БЧ", _host.Properties["c.ipt"][Core.Storage.PropertyNames.Format]);
+
+        var report = _dialogs.Infos.Single();
+        Assert.Contains("Записано форматов: 2. Без изменений: 1.", report);
+        Assert.Contains("Чертёж не найден — формат «БЧ» (1)", report);
+        Assert.Contains("Вал", report);
+        Assert.True(vm.IsDirty);
+    }
+
+    [Fact]
+    public void Part_without_drawing_gets_blank_format_by_setting_and_old_bch_is_cleared()
+    {
+        _host.Components.Single(c => c.Key == "c.ipt").Format = "БЧ";
+        var vm = Open();
+        Assert.Equal("БЧ", vm.SelectedPartWithoutDrawing.Id); // по умолчанию
+
+        vm.SelectedPartWithoutDrawing = vm.PartWithoutDrawingOptions.Single(o => o.Id == "");
+        Assert.Equal("", _host.Settings.PartWithoutDrawingFormat); // настройка сохранена
+
+        vm.DrawingFormatsCommand.Execute(null);
+
+        Assert.Equal("", vm.Rows.Single(r => r.Name == "Вал").Format);
+        Assert.Equal("", _host.Properties["c.ipt"][Core.Storage.PropertyNames.Format]);
+        Assert.Contains("Чертёж не найден — формат не указывается (2)", _dialogs.Infos.Single()); // Вал и Корпус
+
+        // Пустой формат детали — не замечание проверки.
+        vm.CheckCommand.Execute(null);
+        Assert.DoesNotContain(_dialogs.LastCheck?.Items ?? new List<CheckItem>(), i => i.Message.Contains("Вал") && i.Message.Contains("формат"));
+    }
+
+    [Fact]
+    public void Format_typed_earlier_is_kept_when_drawing_is_not_found()
+    {
+        _host.Components.Single(c => c.Key == "c.ipt").Format = "А4";
+        var vm = Open();
+        vm.SetSelectedRows(new[] { vm.Rows.Single(r => r.Name == "Вал"), vm.Rows.Single(r => r.Name == "Ось") });
+
+        vm.DrawingFormatsCommand.Execute(null);
+
+        Assert.Equal("А4", vm.Rows.Single(r => r.Name == "Вал").Format);
+        Assert.False(_host.Properties.ContainsKey("c.ipt"));
+        Assert.Contains("оставлен формат, заданный раньше (2)", _dialogs.Infos.Single());
+    }
+
+    [Fact]
+    public void Only_selected_parts_when_several_rows_are_selected_and_cancel_changes_nothing()
+    {
+        _host.Drawings["a.ipt"] = "А3";
+        _host.Drawings["c.ipt"] = "А3";
+        var vm = Open();
+        vm.SetSelectedRows(new[] { vm.Rows.Single(r => r.Name == "Вал"), vm.Rows.Single(r => r.Name == "Узел") });
+
+        _dialogs.ConfirmAnswer = false;
+        vm.DrawingFormatsCommand.Execute(null);
+        Assert.Empty(_host.DrawingRequests);
+
+        _dialogs.ConfirmAnswer = true;
+        vm.DrawingFormatsCommand.Execute(null);
+        Assert.Equal(new[] { "c.ipt" }, _host.DrawingRequests.Single());
+        Assert.Equal("", vm.Rows.Single(r => r.Name == "Корпус").Format);
+    }
+}
+
+public class DocumentRowTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    private SpecificationViewModel Open()
+    {
+        _host.Components.Add(new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "А.001", Name = "Корпус", Quantity = 1 });
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    [Fact]
+    public void Document_added_by_hand_has_no_quantity_and_type_menu_fills_it()
+    {
+        var vm = Open();
+        vm.InsertSectionCommand.Execute(SectionIds.Documentation);
+        vm.AddItemCommand.Execute(null);
+        var row = vm.SelectedRow!;
+        Assert.Equal("", row.Quantity);
+
+        row.Designation = "АБВГ.301234.001";
+        vm.SelectedRow = vm.Rows.Single(r => r.RowId == row.RowId);
+        Assert.Contains(vm.DocumentTypeOptions, o => o.Id == "ТУ" && o.Name == "ТУ — Технические условия");
+
+        vm.SetDocumentTypeCommand.Execute("СБ");
+
+        var updated = vm.Rows.Single(r => r.RowId == row.RowId);
+        Assert.Equal("АБВГ.301234.001СБ", updated.Designation);
+        Assert.Equal("Сборочный чертеж", updated.Name);
+        Assert.True(vm.CanSetDocumentType);
+
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Корпус");
+        Assert.False(vm.SetDocumentTypeCommand.CanExecute("СБ")); // не документ
+        Assert.False(vm.CanSetDocumentType); // пункта меню нет
+    }
+
+    [Fact]
+    public void External_document_only_from_documentation_and_shows_its_folder()
+    {
+        var vm = Open();
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Корпус");
+        Assert.False(vm.CanAddExternalDocument); // в «Деталях» пункта нет
+
+        vm.InsertSectionCommand.Execute(SectionIds.Documentation);
+        vm.SelectedRow = vm.Rows.Single(r => r.IsHeader && r.SectionId == SectionIds.Documentation);
+        Assert.True(vm.CanAddExternalDocument);
+
+        var file = System.IO.Path.Combine(_host.AssemblyFolder, "Документы", "АБВГ.301234.001ТУ-ТУ-ред.pdf");
+        _dialogs.DocumentFiles = new[] { file };
+        vm.AddExternalDocumentCommand.Execute(null);
+
+        var row = vm.Rows.Single(r => r.Designation == "АБВГ.301234.001ТУ");
+        Assert.Equal(("Технические условия", "", ""), (row.Name, row.Format, row.Quantity));
+        Assert.Equal(System.IO.Path.Combine("Документы", "АБВГ.301234.001ТУ-ТУ-ред.pdf"), row.Row!.DocumentFile);
+
+        // Второй раз тот же файл не добавляется.
+        vm.AddExternalDocumentCommand.Execute(null);
+        Assert.Single(vm.Rows, r => r.Designation == "АБВГ.301234.001ТУ");
+
+        // «Показать файл в папке»: файла пока нет — предупреждение, есть — папка.
+        vm.SelectedRow = vm.Rows.Single(r => r.RowId == row.RowId);
+        Assert.True(vm.IsDocumentSelected);
+        Assert.True(vm.ShowDocumentFileCommand.CanExecute(null));
+        System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(file)!);
+        System.IO.File.WriteAllText(file, "");
+        try
+        {
+            vm.ShowDocumentFileCommand.Execute(null);
+            Assert.Equal(file, Assert.Single(_dialogs.ShownInFolder));
+        }
+        finally
+        {
+            System.IO.File.Delete(file);
+        }
+    }
+}
+
+public class ResetSectionsTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    public ResetSectionsTests()
+    {
+        _host.Components.AddRange(new[]
+        {
+            new ComponentData { Key = "u.iam", Kind = ComponentKind.Assembly, SectionId = SectionIds.OtherProducts, Designation = "Б.001", Name = "Узел", Quantity = 1 },
+            new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, SectionId = SectionIds.Materials, Name = "Пластина", Quantity = 1 },
+            new ComponentData { Key = "b.ipt", Kind = ComponentKind.Part, Designation = "А.002", Name = "Ось", Quantity = 1 },
+            new ComponentData { Key = "s.ipt", Kind = ComponentKind.Part, SectionId = SectionIds.StandardProducts, Name = "Шайба 8 ГОСТ 11371-78", Quantity = 1 },
+            new ComponentData { Key = "c.ipt", Kind = ComponentKind.Part, IsContentCenter = true, SectionId = SectionIds.OtherProducts, Name = "Болт М8 ГОСТ 7798-70", Quantity = 1 },
+        });
+        _host.Properties["u.iam"] = new() { [Core.Storage.PropertyNames.Section] = SectionIds.OtherProducts };
+        _host.Properties["a.ipt"] = new() { [Core.Storage.PropertyNames.Section] = SectionIds.Materials };
+        _host.Properties["s.ipt"] = new() { [Core.Storage.PropertyNames.Section] = SectionIds.StandardProducts };
+        _host.Properties["c.ipt"] = new() { [Core.Storage.PropertyNames.Section] = SectionIds.OtherProducts };
+    }
+
+    private SpecificationViewModel Open()
+    {
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    private static string Section(SpecificationViewModel vm, string name) => vm.Rows.Single(r => r.Name == name).SectionId;
+
+    [Fact]
+    public void All_sections_are_reset_except_standard_products()
+    {
+        var vm = Open();
+        var oseRow = vm.Specification.Rows.Single(r => r.Get(SpecColumn.Name) == "Ось");
+        Core.Editing.SpecificationEditor.SetCell(vm.Specification, SpecificationContext.Create(_host.Settings, vm.Specification),
+            oseRow, SpecColumn.Section, SectionIds.Kits); // ручной перенос в этой спецификации
+        vm.SearchText = "";
+
+        vm.ResetSectionsCommand.Execute(null);
+
+        Assert.Equal(SectionIds.AssemblyUnits, Section(vm, "Узел"));
+        Assert.Equal(SectionIds.Parts, Section(vm, "Пластина"));
+        Assert.Equal(SectionIds.Parts, Section(vm, "Ось"));
+        Assert.Equal("", _host.Properties["u.iam"][Core.Storage.PropertyNames.Section]);
+
+        // Стандартные изделия не тронуты.
+        Assert.Equal(SectionIds.StandardProducts, _host.Properties["s.ipt"][Core.Storage.PropertyNames.Section]);
+        Assert.Equal(SectionIds.StandardProducts, Section(vm, "Шайба 8 ГОСТ 11371-78"));
+
+        // Изделие Content Center — стандартное по типу: не трогается, даже если перенесено в прочие.
+        Assert.Equal(SectionIds.OtherProducts, Section(vm, "Болт М8 ГОСТ 7798-70"));
+        Assert.Equal(SectionIds.OtherProducts, _host.Properties["c.ipt"][Core.Storage.PropertyNames.Section]);
+        Assert.Contains("Изменено файлов: 2", _dialogs.Infos.Single());
+    }
+
+    [Fact]
+    public void Context_menu_resets_only_selected_row_and_cancel_changes_nothing()
+    {
+        var vm = Open();
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Узел");
+
+        _dialogs.ConfirmAnswer = false;
+        vm.ResetSectionsCommand.Execute("selected");
+        Assert.Equal(SectionIds.OtherProducts, Section(vm, "Узел"));
+
+        _dialogs.ConfirmAnswer = true;
+        vm.ResetSectionsCommand.Execute("selected");
+        Assert.Equal(SectionIds.AssemblyUnits, Section(vm, "Узел"));
+        Assert.Equal(SectionIds.Materials, Section(vm, "Пластина"));
+
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Шайба 8 ГОСТ 11371-78");
+        Assert.False(vm.ResetSectionsCommand.CanExecute("selected"));
+    }
+}
+
+public class ShowInFolderTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    private SpecificationViewModel Open()
+    {
+        _host.Components.AddRange(new[]
+        {
+            new ComponentData { Key = "drawing:Привод.idw", Kind = ComponentKind.Document, Designation = "А.000СБ" },
+            new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "А.001", Name = "Корпус", Quantity = 1 },
+        });
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    [Fact]
+    public void Component_file_and_its_drawing_are_shown_in_folder()
+    {
+        var vm = Open();
+        var part = Path.GetTempFileName();
+        try
+        {
+            _host.Files["a.ipt"] = part;
+            _host.Drawings["a.ipt"] = "А3";
+            vm.SelectedRow = vm.Rows.Single(r => r.Name == "Корпус");
+
+            vm.ShowComponentFileCommand.Execute(null);
+            vm.ShowDrawingFileCommand.Execute(null);
+
+            Assert.Equal(new[] { part, "a.ipt.idw" }, _dialogs.ShownInFolder);
+        }
+        finally
+        {
+            File.Delete(part);
+        }
+    }
+
+    [Fact]
+    public void Missing_file_or_drawing_is_reported_and_drawing_row_has_no_drawing_command()
+    {
+        var vm = Open();
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Корпус");
+
+        vm.ShowComponentFileCommand.Execute(null);
+        vm.ShowDrawingFileCommand.Execute(null);
+
+        Assert.Empty(_dialogs.ShownInFolder);
+        Assert.Equal(2, _dialogs.Warnings.Count);
+        Assert.Contains("Чертёж компонента «А.001 Корпус» не найден", _dialogs.Warnings[1]);
+
+        // У документа — один пункт «Показать документ в папке».
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Сборочный чертеж");
+        Assert.True(vm.IsDocumentSelected);
+        Assert.False(vm.ShowComponentFileCommand.CanExecute(null));
+        Assert.False(vm.ShowDrawingFileCommand.CanExecute(null));
+        Assert.True(vm.ShowDocumentFileCommand.CanExecute(null));
+        var drawing = Path.GetTempFileName();
+        try
+        {
+            _host.Files["drawing:Привод.idw"] = drawing;
+            vm.ShowDocumentFileCommand.Execute(null);
+            Assert.Equal(drawing, Assert.Single(_dialogs.ShownInFolder));
+        }
+        finally
+        {
+            File.Delete(drawing);
+        }
+
+        vm.SelectedRow = vm.Rows.First(r => r.IsHeader);
+        Assert.False(vm.ShowComponentFileCommand.CanExecute(null));
+    }
+}
+
+public class ConfirmationViewModelTests
+{
+    [Fact]
+    public void Action_needs_the_check_box()
+    {
+        var vm = new ConfirmationViewModel("Авторазделы", "Будут изменены файлы.", "Понимаю", "Выполнить");
+        var changed = new List<string?>();
+        vm.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+
+        Assert.False(vm.IsConfirmed);
+        vm.IsConfirmed = true;
+
+        Assert.True(vm.IsConfirmed);
+        Assert.Equal(new[] { nameof(ConfirmationViewModel.IsConfirmed) }, changed);
+        Assert.Equal("Выполнить", vm.ActionText);
+    }
+}
+
+public class PageMarkTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    private SpecificationViewModel Open(int parts)
+    {
+        for (var i = 1; i <= parts; i++)
+        {
+            _host.Components.Add(new ComponentData { Key = $"p{i}.ipt", Kind = ComponentKind.Part, Designation = $"А.{i:000}", Name = $"Деталь {i}", Format = "А4", Quantity = 1 });
+        }
+
+        _host.Components.Add(new ComponentData { Key = "u.iam", Kind = ComponentKind.Assembly, Designation = "Б.001", Name = "Узел", Quantity = 1 });
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    [Fact]
+    public void Sheet_boundaries_are_marked_like_in_pdf()
+    {
+        var vm = Open(40);
+
+        Assert.True(vm.PageCount >= 2);
+        var start = vm.Rows.First(r => r.IsPageStart);
+        Assert.Equal(2, start.PageStart);
+        Assert.Equal("Лист 2", start.PageStartText);
+        Assert.Equal(vm.PageCount - 1, vm.Rows.Count(r => r.IsPageStart));
+        Assert.Contains($"листов PDF: {vm.PageCount}", vm.StatusText);
+    }
+
+    [Fact]
+    public void Section_can_start_a_new_sheet_from_the_context_menu()
+    {
+        var vm = Open(3);
+        Assert.Equal(1, vm.PageCount);
+
+        var header = vm.Rows.Single(r => r.IsHeader && r.SectionId == SectionIds.Parts);
+        vm.SelectedRow = header;
+        Assert.True(vm.CanSetNewPage);
+        Assert.False(vm.SelectedStartsNewPage); // по умолчанию выключено
+
+        vm.SelectedStartsNewPage = true;
+
+        Assert.Equal(2, vm.PageCount);
+        Assert.Equal(2, vm.Rows.Single(r => r.IsHeader && r.SectionId == SectionIds.Parts).PageStart);
+        Assert.True(vm.IsDirty);
+
+        vm.SelectedRow = vm.Rows.First(r => r.Row is not null);
+        Assert.False(vm.CanSetNewPage); // только у заголовков
+    }
+
+    [Fact]
+    public void Group_can_start_a_new_sheet()
+    {
+        var vm = Open(3);
+        var spec = vm.Specification;
+        var group = Core.Editing.SpecificationEditor.AddGroup(spec, "Изделия, устанавливаемые по чертежу А.000МЭ");
+        Core.Editing.SpecificationEditor.MoveToGroup(spec, SpecificationContext.Create(_host.Settings, spec), spec.Rows.First(r => r.Kind == RowKind.Component), group.Id);
+        vm = new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+
+        vm.SelectedRow = vm.Rows.Single(r => r.IsGroupHeader);
+        vm.SelectedStartsNewPage = true;
+
+        Assert.True(vm.Specification.StartsNewPage(group.Id, ""));
+        Assert.Equal(2, vm.Rows.Single(r => r.IsGroupHeader).PageStart);
+    }
+}
+
+public class TitleBlockEditTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    [Fact]
+    public void People_go_to_iproperties_changes_and_letter_to_specification_and_export()
+    {
+        _host.Components.Add(new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "А.001", Name = "Корпус", Format = "А4", Quantity = 1 });
+        _host.Title = () => new TitleBlock { Designation = "АБВГ.301234.001", Name = "Привод", Developer = "Иванов" };
+        _host.ExportFolder = Path.Combine(Path.GetTempPath(), "tb-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_host.ExportFolder);
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        var vm = new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+        try
+        {
+            _dialogs.OnTitleBlock = t =>
+            {
+                Assert.Equal("Иванов", t.Developer);
+                t.NormControl = "Сидоров";
+                t.Organization = "ООО «Ромашка»";
+                t.Letter = "О1";
+                t.NameTextHeight = "7";
+                t.Changes.Add(new ChangeRecord { Number = "1", Sheet = "1", Document = "АБВГ.12-24", Date = "10.24" });
+                t.Changes.Add(new ChangeRecord()); // пустая строка таблицы не сохраняется
+            };
+
+            vm.EditTitleBlockCommand.Execute(null);
+
+            var written = Assert.Single(_host.WrittenTitles);
+            Assert.Equal(("Иванов", "Сидоров", "ООО «Ромашка»"), (written.Developer, written.NormControl, written.Organization));
+            Assert.True(vm.Specification.Title.IsSet);
+            Assert.Equal("АБВГ.12-24", Assert.Single(vm.Specification.Title.Changes).Document);
+            Assert.True(vm.IsDirty);
+
+            // Выгрузка: литера, шрифт и изменения — из спецификации.
+            vm.ExportExcelCommand.Execute(null);
+            var file = Excel.ExcelReader.Read(Path.Combine(_host.ExportFolder, "spec.xlsx"));
+            Assert.Equal("О1", file.TitleBlock.Letter);
+            Assert.Equal(7, file.TitleBlock.NameTextHeight);
+            Assert.Equal("АБВГ.12-24", Assert.Single(file.TitleBlock.Changes).Document);
+
+            // Повторно без изменений подписей — iProperties не перезаписываются.
+            _dialogs.OnTitleBlock = _ => { };
+            vm.EditTitleBlockCommand.Execute(null);
+            Assert.Single(_host.WrittenTitles);
+        }
+        finally
+        {
+            Directory.Delete(_host.ExportFolder, true);
+        }
+    }
+
+    [Fact]
+    public void Name_font_must_be_a_number()
+    {
+        var vm = new TitleBlockViewModel(new TitleBlock()) { NameTextHeight = "пять" };
+        Assert.NotNull(vm.Validate());
+        vm.NameTextHeight = "3.5";
+        Assert.Null(vm.Validate());
+        Assert.Equal(3.5, vm.ToTitleData().NameTextHeight);
+    }
+}
+
+public class VersionWindowTests
+{
+    private readonly FakeHost _host = new();
+    private readonly FakeDialogs _dialogs = new();
+
+    private static ComponentData Part(string designation, string name, decimal quantity = 1) =>
+        new() { Key = designation + ".ipt", Kind = ComponentKind.Part, Designation = designation, Name = name, Format = "А4", Quantity = quantity };
+
+    private SpecificationViewModel Open()
+    {
+        _host.Components.AddRange(new[] { Part("А.001", "Корпус"), Part("А.002", "Ось"), Part("А.003", "Втулка", 2) });
+        _host.Title = () => new TitleBlock { Designation = "АБВГ.00.00.000", Name = "Узел" };
+        var path = Path.Combine(_host.AssemblyFolder, "Исп01.iam");
+        _host.Versions[path] = new VersionData("АБВГ.00.00.000-01", new[] { Part("А.001", "Корпус"), Part("А.003", "Втулка", 4), Part("А.004", "Шайба") });
+        _dialogs.VersionFile = path;
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        return new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+    }
+
+    [Fact]
+    public void Added_version_splits_constant_and_variable_data_and_marks_the_version_assembly()
+    {
+        var vm = Open();
+
+        vm.AddVersionCommand.Execute(null);
+
+        Assert.Equal("АБВГ.00.00.000", _host.VersionMarks.Single().Value);
+        var names = vm.Rows.Select(r => r.Name).ToList();
+        Assert.Contains("Переменные данные для исполнений:", names);
+        Assert.Contains("АБВГ.00.00.000", names);
+        Assert.Contains("АБВГ.00.00.000-01", names);
+
+        // Корпус — общий; Ось и Втулка — переменные основного; у -01 — Втулка (4 шт.) и Шайба, серые и только для чтения.
+        Assert.Equal("", vm.Specification.Rows.Single(r => r.Get(SpecColumn.Name) == "Корпус").GroupId);
+        var items = vm.Rows.Where(r => r.IsVersionItem).ToList();
+        Assert.Equal(new[] { "Втулка", "Шайба" }, items.Select(r => r.Name).OrderBy(x => x));
+        Assert.All(items, r => Assert.False(r.CanEdit(SpecColumn.Name)));
+        var sleeve = items.Single(r => r.Name == "Втулка");
+        Assert.Equal(vm.Rows.Single(r => r.Name == "Втулка" && !r.IsVersionItem).Position, sleeve.Position);
+        Assert.Equal("4", sleeve.Quantity);
+
+        // В строку исполнения ничего не добавить и не удалить.
+        vm.SelectedRow = sleeve;
+        Assert.False(vm.AddItemCommand.CanExecute(null));
+        Assert.False(vm.DeleteRowCommand.CanExecute(null));
+        Assert.True(vm.IsVersionItemSelected);
+    }
+
+    [Fact]
+    public void Version_allows_only_format_zone_and_note_with_undo()
+    {
+        var vm = Open();
+        vm.AddVersionCommand.Execute(null);
+        var item = vm.Rows.First(r => r.IsVersionItem);
+        var id = item.RowId;
+        foreach (var column in Enum.GetValues<SpecColumn>())
+        {
+            Assert.Equal(column is SpecColumn.Format or SpecColumn.Zone or SpecColumn.Note, item.CanEdit(column));
+        }
+        var name = item.Name;
+        var format = item.Format;
+        item.Name = "Запрещено";
+        Assert.Equal(name, item.Name);
+        item.Format = "А2";
+        item.Zone = "Б3";
+        item.Note = "Примечание исполнения";
+        Assert.Equal(("А2", "Б3", "Примечание исполнения"), (item.Format, item.Zone, item.Note));
+        Assert.True(vm.IsDirty);
+        vm.UndoCommand.Execute(null);
+        Assert.Equal("", vm.Rows.Single(r => r.RowId == id).Note);
+        vm.UndoCommand.Execute(null);
+        Assert.Equal("", vm.Rows.Single(r => r.RowId == id).Zone);
+        vm.UndoCommand.Execute(null);
+        Assert.Equal(format, vm.Rows.Single(r => r.RowId == id).Format);
+    }
+
+    [Fact]
+    public void Replacing_part_and_removing_the_version()
+    {
+        var vm = Open();
+        vm.AddVersionCommand.Execute(null);
+        var axis = vm.Rows.Single(r => r.Name == "Ось");
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Шайба");
+        var option = vm.ReplacesOptions.Single(o => o.Name.StartsWith(axis.Position + " — "));
+
+        vm.SetReplacesCommand.Execute(option.Id);
+
+        Assert.Equal(axis.Position, vm.Rows.Single(r => r.Name == "Шайба").Position);
+
+        vm.SelectedRow = vm.Rows.Single(r => r.IsGroupHeader && r.Name == "АБВГ.00.00.000-01");
+        Assert.True(vm.RemoveVersionCommand.CanExecute(null));
+        _dialogs.ConfirmAnswer = true;
+        vm.RemoveVersionCommand.Execute(null);
+
+        Assert.Empty(_host.VersionMarks);
+        Assert.Empty(vm.Specification.Groups);
+        Assert.DoesNotContain(vm.Rows, r => r.IsVersionItem);
+    }
+
+    [Fact]
+    public void Group_inside_base_version_and_read_only_group_of_other_version()
+    {
+        var vm = Open();
+        var path = _dialogs.VersionFile!;
+        _host.Versions[path] = _host.Versions[path] with
+        {
+            GroupTitles = new Dictionary<string, string> { ["А.004.ipt"] = "Изделия, устанавливаемые по А-01МЭ" },
+        };
+        vm.AddVersionCommand.Execute(null);
+
+        // Группа исполнения -01 — из его сборки, только для чтения.
+        var foreign = vm.Rows.Single(r => r.IsGroupHeader && r.Name == "Изделия, устанавливаемые по А-01МЭ");
+        Assert.False(foreign.CanEdit(SpecColumn.Name));
+        vm.SelectedRow = foreign;
+        Assert.False(vm.DeleteGroupCommand.CanExecute(null));
+        Assert.False(vm.AddItemCommand.CanExecute(null));
+        Assert.Contains(vm.Rows, r => r.IsVersionItem && r.Name == "Шайба" && r.GroupId == foreign.GroupId);
+
+        // Группа в основном исполнении — создаётся с его строки, правится, в неё можно перенести строку.
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Ось");
+        _dialogs.OnGroup = g => g.Title = "Изделия, устанавливаемые по А.000МЭ";
+        vm.AddGroupCommand.Execute(null);
+        var own = vm.Specification.Groups.Single(g => g.Title == "Изделия, устанавливаемые по А.000МЭ");
+        Assert.Equal(Core.Versions.VersionSync.Base(vm.Specification)!.Id, own.VersionId);
+        Assert.Contains(vm.GroupOptions, o => o.Id == own.Id);
+        Assert.DoesNotContain(vm.GroupOptions, o => o.Id == foreign.GroupId);
+
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Ось");
+        vm.MoveToGroupCommand.Execute(own.Id);
+        Assert.Equal(own.Id, vm.Rows.Single(r => r.Name == "Ось").GroupId);
+    }
+
+    [Fact]
+    public void Read_only_version_rejects_sections_and_documents_but_own_group_gets_the_document()
+    {
+        var vm = Open();
+        vm.AddVersionCommand.Execute(null);
+
+        // У исполнения -01 (данные из его сборки) разделы и документы не добавляются.
+        vm.SelectedRow = vm.Rows.Single(r => r.IsVersionItem && r.Name == "Шайба");
+        Assert.Empty(vm.InsertableSections());
+        Assert.False(vm.InsertSectionCommand.CanExecute(SectionIds.Documentation));
+        Assert.False(vm.AddNoteCommand.CanExecute(null));
+
+        // В основном исполнении — можно: документ попадает в «Документацию» именно этого исполнения.
+        var baseVersion = Core.Versions.VersionSync.Base(vm.Specification)!;
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Ось");
+        vm.InsertSectionCommand.Execute(SectionIds.Documentation);
+        vm.SelectedRow = vm.Rows.Single(r => r.IsHeader && r.GroupId == baseVersion.Id && r.SectionId == SectionIds.Documentation);
+        Assert.True(vm.CanAddExternalDocument);
+        _dialogs.DocumentFiles = new[] { Path.Combine(_host.AssemblyFolder, "АБВГ.00.00.000ТУ-ТУ.pdf") };
+        vm.AddExternalDocumentCommand.Execute(null);
+
+        Assert.Equal(baseVersion.Id, vm.Specification.Rows.Single(r => r.DocumentFile.Length > 0).GroupId);
+    }
+
+    [Fact]
+    public void Levels_are_common_components_versions_then_groups_and_sections()
+    {
+        var vm = Open();
+        vm.AddVersionCommand.Execute(null);
+
+        var common = vm.Rows.First();
+        Assert.Equal(Core.Versions.VersionSync.CommonTitle, common.Name);
+        Assert.True(common.IsVersionLevel);
+        Assert.True(vm.Rows.Single(r => r.Name == "АБВГ.00.00.000-01").IsVersionLevel);
+        Assert.True(vm.Rows.Single(r => r.Name == Core.Versions.VersionSync.VariableDataTitle).IsVersionLevel);
+        Assert.False(vm.Rows.First(r => r.Kind == SpecRowKind.Header).IsVersionLevel);
+
+        // «Общие компоненты» — только в окне.
+        Assert.DoesNotContain(Excel.ExcelExporter.Rows(vm.Specification, SpecificationContext.Create(_host.Settings, vm.Specification)),
+            r => r.Values.Name == Core.Versions.VersionSync.CommonTitle);
+
+        // Резерв и «Перенести в группу» — по уровням.
+        ReserveSettingsViewModel? reserves = null;
+        _dialogs.OnReserves = r => reserves = r;
+        vm.ReservesCommand.Execute(null);
+        Assert.Contains(reserves!.Parts, p => p.Title == "Общие компоненты");
+        Assert.Contains(reserves.Parts, p => p.Title == "Исполнение АБВГ.00.00.000-01");
+    }
+
+    [Fact]
+    public void Component_of_version_01_moves_into_its_own_installed_per_group_and_stays_there()
+    {
+        var vm = Open();
+        vm.AddVersionCommand.Execute(null);
+        var version = vm.Specification.Groups.Single(g => g.Title == "АБВГ.00.00.000-01");
+
+        // Группа внутри исполнения -01 — с его строки.
+        vm.SelectedRow = vm.Rows.Single(r => r.IsVersionItem && r.Name == "Шайба");
+        _dialogs.OnGroup = g => g.Title = "Изделия, устанавливаемые по чертежу АБВГ.00.00.000-01Э4";
+        vm.AddGroupCommand.Execute(null);
+        var group = vm.Specification.Groups.Single(g => g.Title.EndsWith("Э4"));
+        Assert.Equal(version.Id, group.VersionId);
+        var header = vm.Rows.Single(r => r.GroupId == group.Id && r.IsGroupHeader);
+        Assert.True(header.CanEdit(SpecColumn.Name)); // своя группа — правится
+
+        // Для строки -01 в меню — только -01 и его группы.
+        vm.SelectedRow = vm.Rows.Single(r => r.IsVersionItem && r.Name == "Шайба");
+        Assert.Equal(new[] { version.Id, group.Id }, vm.GroupOptions.Select(o => o.Id));
+        vm.MoveToGroupCommand.Execute(group.Id);
+        Assert.Equal(group.Id, vm.Rows.Single(r => r.Name == "Шайба").GroupId);
+
+        // Обновление из сборки перенос не сбрасывает.
+        vm.UpdateFromAssemblyCommand.Execute(null);
+        Assert.Equal(group.Id, vm.Specification.Rows.Single(r => r.Get(SpecColumn.Name) == "Шайба").GroupId);
+
+        // Строку головной сборки в группу -01 не перенести.
+        vm.SelectedRow = vm.Rows.Single(r => r.Name == "Ось");
+        Assert.False(vm.MoveToGroupCommand.CanExecute(group.Id));
+        Assert.DoesNotContain(vm.GroupOptions, o => o.Id == group.Id);
+
+        // Удаление группы — строка возвращается в исполнение.
+        vm.SelectedRow = vm.Rows.Single(r => r.GroupId == group.Id && r.IsGroupHeader);
+        _dialogs.ConfirmAnswer = true;
+        vm.DeleteGroupCommand.Execute(null);
+        Assert.Equal(version.Id, vm.Specification.Rows.Single(r => r.Get(SpecColumn.Name) == "Шайба").GroupId);
+    }
+
+    [Fact]
+    public void Version_assembly_takes_positions_from_the_head_and_writes_bom()
+    {
+        _host.Components.AddRange(new[] { Part("А.001", "Корпус"), Part("А.004", "Шайба"), Part("А.009", "Своя") });
+        var spec = new Specification();
+        Core.Update.SpecificationUpdater.Update(spec, _host.Components, SpecificationContext.Create(_host.Settings, spec), DateTime.UtcNow);
+        _host.VersionOf = "Эта сборка — исполнение А-01 сборки А";
+        _host.HeadPositions = new Dictionary<string, int> { ["А.001.ipt"] = 1, ["А.004.ipt"] = 7 };
+        var vm = new SpecificationViewModel(_host, _dialogs, spec, post: action => action());
+        Assert.True(vm.PullHeadPositionsCommand.CanExecute(null));
+        _dialogs.ConfirmAnswer = true;
+
+        vm.PullHeadPositionsCommand.Execute(null);
+
+        Assert.Equal("7", vm.Rows.Single(r => r.Name == "Шайба").Position);
+        Assert.Equal("1", vm.Rows.Single(r => r.Name == "Корпус").Position);
+        Assert.Equal(1, _host.WritePositionsCount);
+        Assert.Contains(_dialogs.Confirmations, c => c.Contains("Нет в групповой спецификации (1)") && c.Contains("Своя"));
+    }
+
+    [Fact]
+    public void Head_positions_error_is_reported_and_command_only_in_version_assembly()
+    {
+        var plain = new SpecificationViewModel(_host, _dialogs, new Specification(), post: action => action());
+        Assert.False(plain.PullHeadPositionsCommand.CanExecute(null));
+
+        _host.VersionOf = "Эта сборка — исполнение";
+        var vm = new SpecificationViewModel(_host, _dialogs, new Specification(), post: action => action());
+        vm.PullHeadPositionsCommand.Execute(null);
+
+        Assert.Contains("Головная сборка не найдена", _dialogs.Warnings.Single());
+    }
+
+    [Fact]
+    public void Version_assembly_shows_a_notice()
+    {
+        _host.VersionOf = "Эта сборка — исполнение А-01 сборки А";
+        var vm = new SpecificationViewModel(_host, _dialogs, new Specification(), post: action => action());
+
+        Assert.Equal("Эта сборка — исполнение А-01 сборки А", vm.VersionNotice);
+    }
+}

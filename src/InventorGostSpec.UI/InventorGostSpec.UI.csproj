@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- Позволяет собирать WPF-проект не только на Windows (CI, проверка компиляции). -->
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RootNamespace>InventorGostSpec.UI</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\InventorGostSpec.Core\InventorGostSpec.Core.csproj" />
+    <ProjectReference Include="..\InventorGostSpec.Excel\InventorGostSpec.Excel.csproj" />
+    <!-- Разметка листов PDF в выгружаемом Excel. -->
+    <ProjectReference Include="..\InventorGostSpec.Pdf\InventorGostSpec.Pdf.csproj" />
+  </ItemGroup>
+
+</Project>
