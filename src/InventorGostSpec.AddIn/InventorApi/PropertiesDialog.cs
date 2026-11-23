@@ -15,8 +15,10 @@ namespace InventorGostSpec.AddIn.InventorApi;
 /// </remarks>
 internal sealed class PropertiesDialog
 {
-    /// <summary>Внутреннее имя команды Inventor «iProperties».</summary>
-    private const string IPropertiesCommand = "AppiPropertiesCmd";
+    /// <summary>
+    /// Внутренние имена команды Inventor «iProperties», по порядку: в среде сборки (ПКМ на компоненте) и общая.
+    /// </summary>
+    private static readonly string[] IPropertiesCommands = { "AssemblyiPropertiesCmd", "AppiPropertiesWrapperCmd" };
 
     private readonly Inventor.Application _application;
     private readonly AssemblyDocument _assembly;
@@ -38,15 +40,9 @@ internal sealed class PropertiesDialog
     {
         var occurrence = FirstOccurrence(row) ?? throw new InvalidOperationException("У компонента нет вхождения в сборке.");
 
-        Inventor.ControlDefinition command;
-        try
-        {
-            command = _application.CommandManager.ControlDefinitions[IPropertiesCommand];
-        }
-        catch (COMException ex)
-        {
-            throw new InvalidOperationException($"Команда Inventor «iProperties» ({IPropertiesCommand}) не найдена: {ex.Message}", ex);
-        }
+        var command = FindCommand() ?? throw new InvalidOperationException(
+            $"Команда Inventor «iProperties» не найдена (искались {string.Join(", ", IPropertiesCommands)}).\n" +
+            $"Команды Inventor с «iProperties» в имени: {string.Join(", ", SimilarCommands())}");
 
         var selectSet = _assembly.SelectSet;
         try
@@ -124,6 +120,46 @@ internal sealed class PropertiesDialog
         {
             EnableWindow(_owner, false);
         }
+    }
+
+    private Inventor.ControlDefinition? FindCommand()
+    {
+        var definitions = _application.CommandManager.ControlDefinitions;
+        foreach (var name in IPropertiesCommands)
+        {
+            try
+            {
+                return definitions[name];
+            }
+            catch (COMException ex)
+            {
+                Log.Info("iProperties", $"Команды {name} нет: {ex.Message}");
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Внутренние имена команд с «iProperties» — для сообщения об ошибке.</summary>
+    private string SimilarCommands()
+    {
+        var names = new List<string>();
+        try
+        {
+            foreach (Inventor.ControlDefinition definition in _application.CommandManager.ControlDefinitions)
+            {
+                if (definition.InternalName.Contains("iPropert", StringComparison.OrdinalIgnoreCase))
+                {
+                    names.Add(definition.InternalName);
+                }
+            }
+        }
+        catch (COMException ex)
+        {
+            Log.Error("iProperties: ControlDefinitions", ex);
+        }
+
+        return names.Count > 0 ? string.Join(", ", names) : "нет";
     }
 
     private void ClearSelection()
