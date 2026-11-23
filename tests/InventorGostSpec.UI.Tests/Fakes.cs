@@ -98,14 +98,29 @@ internal sealed class FakeHost : ISpecificationHost
 
     public string? GetComponentFile(string componentKey) => Files.TryGetValue(componentKey, out var file) ? file : null;
 
-    /// <summary>Что «пользователь» меняет в окне iProperties Inventor; вызовы — по ключу компонента.</summary>
+    /// <summary>Что «пользователь» меняет в окне iProperties Inventor.</summary>
     public Action<ComponentData>? EditInInventor { get; set; }
 
     public List<string> InventorPropertiesCalls { get; } = new();
 
-    public ComponentData? ShowInventorProperties(string componentKey)
+    /// <summary>Что возвращает запуск команды: Closed — окно уже закрыто (синхронно), иначе — состояние для опроса.</summary>
+    public InventorDialogState OpenResult { get; set; } = InventorDialogState.Closed;
+
+    public InventorDialogState DialogState { get; set; } = InventorDialogState.Closed;
+
+    public int EndCalls { get; private set; }
+
+    public InventorDialogState? OpenInventorProperties(string componentKey)
     {
         InventorPropertiesCalls.Add(componentKey);
+        return Components.Any(c => c.Key == componentKey) ? OpenResult : null;
+    }
+
+    public InventorDialogState GetInventorPropertiesState() => DialogState;
+
+    public ComponentData? EndInventorProperties(string componentKey)
+    {
+        EndCalls++;
         var component = Components.FirstOrDefault(c => c.Key == componentKey);
         if (component is not null)
         {

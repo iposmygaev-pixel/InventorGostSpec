@@ -116,17 +116,29 @@ internal sealed class SpecificationCommand : AddInCommand
             return ReadComponent(item);
         }
 
-        public ComponentData? ShowInventorProperties(string componentKey)
+        private PropertiesDialog? _propertiesDialog;
+
+        public InventorDialogState? OpenInventorProperties(string componentKey)
         {
             if (FindItem(componentKey) is not { } item)
             {
                 return null;
             }
 
-            PropertiesDialog.Show(_context.Application, _assembly, item.Row, _context.MainWindowHandle);
+            _propertiesDialog = new PropertiesDialog(_context.Application, _assembly, _context.MainWindowHandle);
+            return _propertiesDialog.Open(item.Row);
+        }
+
+        public InventorDialogState GetInventorPropertiesState() =>
+            _propertiesDialog?.State() ?? InventorDialogState.Closed;
+
+        public ComponentData? EndInventorProperties(string componentKey)
+        {
+            _propertiesDialog?.End();
+            _propertiesDialog = null;
 
             // Свойства читаются заново: в окне могли поменять обозначение, наименование и свойства SPEC_*.
-            return FindItem(componentKey) is { } fresh ? ReadComponent(fresh) : null;
+            return FindItem(componentKey) is { } item ? ReadComponent(item) : null;
         }
 
         /// <summary>Свежие данные компонента (у сборки — с поиском её чертежа).</summary>

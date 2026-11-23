@@ -37,10 +37,22 @@ public interface ISpecificationHost
     ComponentData WriteComponentProperties(string componentKey, IReadOnlyDictionary<string, string> changes);
 
     /// <summary>
-    /// Открывает окно «iProperties» Inventor для компонента (как ПКМ → iProperties на компоненте в браузере сборки)
-    /// и после его закрытия возвращает свежие данные компонента. <c>null</c> — компонента нет в сборке.
+    /// Открывает окно «iProperties» Inventor для компонента (как ПКМ → iProperties на компоненте в браузере сборки).
+    /// Если окно уже закрыто к возврату — <see cref="InventorDialogState.Closed"/>; иначе Inventor открывает его сам,
+    /// состояние опрашивается <see cref="GetInventorPropertiesState"/>, в конце — <see cref="EndInventorProperties"/>.
+    /// Ошибка — исключение с текстом для пользователя.
     /// </summary>
-    ComponentData? ShowInventorProperties(string componentKey);
+    /// <returns><c>null</c> — компонента нет в сборке.</returns>
+    InventorDialogState? OpenInventorProperties(string componentKey);
+
+    /// <summary>Открыто ли сейчас окно «iProperties», открытое <see cref="OpenInventorProperties"/>.</summary>
+    InventorDialogState GetInventorPropertiesState();
+
+    /// <summary>
+    /// После закрытия окна «iProperties»: снимает выбор в сборке и возвращает свежие данные компонента.
+    /// <c>null</c> — компонента нет в сборке.
+    /// </summary>
+    ComponentData? EndInventorProperties(string componentKey);
 
     /// <summary>Раздел, который компонент получает автоматически, по типу (если SPEC_Section не задан).</summary>
     string GetAutoSectionId(string componentKey);
@@ -107,6 +119,17 @@ public interface ISpecificationHost
 
     /// <summary>Записывает непредвиденную ошибку окна в журнал.</summary>
     void ReportError(Exception exception);
+}
+
+/// <summary>Окно Inventor, открытое из окна спецификации (iProperties).</summary>
+public enum InventorDialogState
+{
+    /// <summary>Команда запущена, окно ещё не появилось.</summary>
+    Starting,
+
+    Open,
+
+    Closed,
 }
 
 /// <param name="DrawingPath">Найденный чертёж; <c>null</c> — чертежа нет.</param>

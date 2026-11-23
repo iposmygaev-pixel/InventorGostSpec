@@ -86,7 +86,7 @@ public sealed partial class SpecificationViewModel : ObservableObject
         InsertComponentNoteCommand = new RelayCommand(InsertComponentNote, () => TargetRows.Any(CanEditComponent));
         SetSortGroupCommand = new RelayCommand(SetSortGroup, p => p is string && TargetRows.Any(r => r.Kind != RowKind.Note));
         EditComponentCommand = new RelayCommand(EditComponent, () => TargetRows.Any(CanEditComponent));
-        InventorPropertiesCommand = new RelayCommand(ShowInventorProperties, () => CanEditComponent(SelectedRow?.Row));
+        InventorPropertiesCommand = new RelayCommand(ShowInventorProperties, () => !IsWaitingForInventor && CanEditComponent(SelectedRow?.Row));
         NextChangeCommand = new RelayCommand(GoToNextChange, () => Specification.Rows.Any(r => r.Status != RowStatus.None));
         ClearSearchCommand = new RelayCommand(() => SearchText = "", () => IsSearching);
         UndoCommand = new RelayCommand(Undo, () => _undo.Count > 0);
@@ -1379,21 +1379,43 @@ public sealed partial class SpecificationViewModel : ObservableObject
         }
     }
 
+    /// <summary>Сколько ждать, пока Inventor откроет окно «iProperties».</summary>
+    public static readonly TimeSpan InventorDialogTimeout = TimeSpan.FromSeconds(15);
+
+    /// <summary>Текущее время (в тестах подменяется).</summary>
+    internal Func<DateTime> Clock { get; set; } = () => DateTime.UtcNow;
+
+    private sealed class PendingInventorDialog
+    {
+        public required string RowId { get; init; }
+        public required string Key { get; init; }
+        public required DateTime Started { get; init; }
+        public required string Description { get; init; }
+    }
+
+    private PendingInventorDialog? _inventorDialog;
+
+    /// <summary>
+    /// Открыто окно «iProperties» Inventor: окно спецификации опрашивает <see cref="PollInventorProperties"/> по таймеру
+    /// и после его закрытия обновляет строку.
+    /// </summary>
+    public bool IsWaitingForInventor => _inventorDialog is not null;
+
     /// <summary>
     /// Открывает «iProperties» Inventor для компонента выбранной строки. После закрытия окна строка обновляется
     /// по свежим свойствам (обозначение, наименование, SPEC_*), без подсветки — изменил сам пользователь.
     /// </summary>
     private void ShowInventorProperties()
     {
-        if (SelectedRow?.Row is not { } row || !CanEditComponent(row))
+        if (IsWaitingForInventor || SelectedRow?.Row is not { } row || !CanEditComponent(row))
         {
             return;
         }
 
-        ComponentData? data;
+        InventorDialogState? state;
         try
         {
-            data = _host.ShowInventorProperties(row.ComponentKey!);
+            state = _host.OpenInventorProperties(row.ComponentKey!);
         }
         catch (Exception ex)
         {
@@ -1402,14 +1424,73 @@ public sealed partial class SpecificationViewModel : ObservableObject
             return;
         }
 
-        if (data is null)
+        if (state is null)
         {
             _dialogs.Warning($"Компонент «{Describe(row)}» не найден в сборке. Обновите спецификацию из сборки.");
             return;
         }
 
+        _inventorDialog = new PendingInventorDialog { RowId = row.Id, Key = row.ComponentKey!, Started = Clock(), Description = Describe(row) };
+        if (state == InventorDialogState.Closed)
+        {
+            FinishInventorProperties(timedOut: false);
+            return;
+        }
+
+        StatusText = $"Открыто окно iProperties Inventor для «{Describe(row)}» — после его закрытия строка обновится.";
+        OnPropertyChanged(nameof(IsWaitingForInventor));
+    }
+
+    /// <summary>Проверяет, закрыто ли окно «iProperties»; закрыто — обновляет строку компонента.</summary>
+    public void PollInventorProperties()
+    {
+        if (_inventorDialog is not { } pending)
+        {
+            return;
+        }
+
+        InventorDialogState state;
+        try
+        {
+            state = _host.GetInventorPropertiesState();
+        }
+        catch (Exception ex)
+        {
+            _host.ReportError(ex);
+            state = InventorDialogState.Closed;
+        }
+
+        if (state == InventorDialogState.Open ||
+            (state == InventorDialogState.Starting && Clock() - pending.Started < InventorDialogTimeout))
+        {
+            return;
+        }
+
+        FinishInventorProperties(timedOut: state == InventorDialogState.Starting);
+    }
+
+    private void FinishInventorProperties(bool timedOut)
+    {
+        var pending = _inventorDialog!;
+        _inventorDialog = null;
+        OnPropertyChanged(nameof(IsWaitingForInventor));
+
+        var data = TryHost(() => _host.EndInventorProperties(pending.Key));
+        if (timedOut)
+        {
+            _dialogs.Warning($"Inventor не открыл окно iProperties для «{pending.Description}». Откройте iProperties " +
+                             "компонента в браузере сборки, затем — «Обновить из сборки».");
+        }
+
+        if (data is null || Specification.FindRow(pending.RowId) is not { } row)
+        {
+            StatusText = timedOut ? "" : $"Компонент «{pending.Description}» не найден в сборке.";
+            return;
+        }
+
         SpecificationEditor.RefreshComponent(Specification, _context, row, data);
         Changed(rebuild: true, selectRowId: row.Id);
+        StatusText = $"Свойства «{Describe(row)}» прочитаны из Inventor.";
     }
 
     /// <summary>Выделяет следующую подсвеченную строку (новую, изменённую или удалённую), по кругу.</summary>

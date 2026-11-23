@@ -226,8 +226,17 @@ public partial class SpecificationWindow : Window, IDialogService
                 _restoringSelection = false;
             }
         };
+        // Окно iProperties Inventor открывается командой Inventor: ждём его закрытия и обновляем строку.
+        var inventorTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher) { Interval = TimeSpan.FromMilliseconds(300) };
+        inventorTimer.Tick += (_, _) => viewModel.PollInventorProperties();
+        Closed += (_, _) => inventorTimer.Stop();
         viewModel.PropertyChanged += (_, e) =>
         {
+            if (e.PropertyName == nameof(SpecificationViewModel.IsWaitingForInventor))
+            {
+                inventorTimer.IsEnabled = viewModel.IsWaitingForInventor;
+            }
+
             // Выделенная строка (после перехода к изменению, переноса, добавления) должна быть видна.
             if (!_rebuilding && e.PropertyName == nameof(SpecificationViewModel.SelectedRow) && viewModel.SelectedRow is { } row)
             {

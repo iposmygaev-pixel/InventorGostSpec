@@ -150,9 +150,61 @@ public class SpecificationViewModelTests
         Assert.False(row.IsChanged);
         Assert.True(vm.IsDirty);
 
+        Assert.False(vm.IsWaitingForInventor);
+        Assert.Equal(1, _host.EndCalls);
+
         // Текстовой строке и заголовку iProperties нет.
         vm.SelectedRow = vm.Rows.First(r => r.IsHeader);
         Assert.False(vm.InventorPropertiesCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public void Inventor_iproperties_opened_asynchronously_refresh_row_after_dialog_closes()
+    {
+        var vm = Open();
+        var now = DateTime.UtcNow;
+        vm.Clock = () => now;
+        vm.SelectedRow = RowByName(vm, "Корпус");
+        _host.OpenResult = InventorDialogState.Starting;
+        _host.DialogState = InventorDialogState.Starting;
+        _host.EditInInventor = c => c.Name = "Корпус литой";
+
+        vm.InventorPropertiesCommand.Execute(null);
+        Assert.True(vm.IsWaitingForInventor);
+        Assert.False(vm.InventorPropertiesCommand.CanExecute(null));
+
+        // Окно ещё не появилось, потом открыто — ждём.
+        vm.PollInventorProperties();
+        _host.DialogState = InventorDialogState.Open;
+        now += TimeSpan.FromMinutes(5);
+        vm.PollInventorProperties();
+        Assert.True(vm.IsWaitingForInventor);
+        Assert.Equal(0, _host.EndCalls);
+
+        _host.DialogState = InventorDialogState.Closed;
+        vm.PollInventorProperties();
+        Assert.False(vm.IsWaitingForInventor);
+        Assert.Equal(1, _host.EndCalls);
+        Assert.Equal("Корпус литой", RowByName(vm, "Корпус литой").Name);
+        Assert.Empty(_dialogs.Warnings);
+    }
+
+    [Fact]
+    public void Inventor_iproperties_that_never_open_stop_waiting_with_warning()
+    {
+        var vm = Open();
+        var now = DateTime.UtcNow;
+        vm.Clock = () => now;
+        vm.SelectedRow = RowByName(vm, "Корпус");
+        _host.OpenResult = InventorDialogState.Starting;
+        _host.DialogState = InventorDialogState.Starting;
+
+        vm.InventorPropertiesCommand.Execute(null);
+        now += SpecificationViewModel.InventorDialogTimeout;
+        vm.PollInventorProperties();
+
+        Assert.False(vm.IsWaitingForInventor);
+        Assert.Single(_dialogs.Warnings);
     }
 
     [Fact]
