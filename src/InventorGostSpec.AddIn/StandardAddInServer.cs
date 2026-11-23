@@ -11,13 +11,14 @@ public sealed class StandardAddInServer : ApplicationAddInServer
 {
     private Inventor.Application? _application;
     private CommandRegistry? _commands;
+    private AddInContext? _context;
 
     public void Activate(ApplicationAddInSite addInSiteObject, bool firstTime)
     {
         try
         {
             _application = addInSiteObject.Application;
-            var context = new AddInContext(_application);
+            var context = _context = new AddInContext(_application);
 
             _commands = new CommandRegistry(context);
             _commands.Register(new AssignSectionCommand());
@@ -37,6 +38,8 @@ public sealed class StandardAddInServer : ApplicationAddInServer
 
     public void Deactivate()
     {
+        _context?.SpecificationWindows.Dispose();
+        _context = null;
         _commands?.Dispose();
         _commands = null;
 

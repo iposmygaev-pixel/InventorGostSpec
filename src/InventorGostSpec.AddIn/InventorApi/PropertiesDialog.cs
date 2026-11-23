@@ -10,8 +10,8 @@ namespace InventorGostSpec.AddIn.InventorApi;
 /// вхождение выбирается в сборке и выполняется команда Inventor «iProperties».
 /// </summary>
 /// <remarks>
-/// Окно спецификации модальное, и Inventor может отказать в синхронном запуске команды (E_FAIL). Тогда команда
-/// запускается асинхронно, а открытие и закрытие её окна отслеживаются по окнам потока Inventor.
+/// Команда запускается синхронно; если Inventor не ждёт закрытия её окна (или отказывает), окно отслеживается
+/// по окнам потока Inventor, а строка спецификации обновляется после его закрытия.
 /// </remarks>
 internal sealed class PropertiesDialog
 {
@@ -22,17 +22,14 @@ internal sealed class PropertiesDialog
 
     private readonly Inventor.Application _application;
     private readonly AssemblyDocument _assembly;
-    private readonly IntPtr _owner;
     private HashSet<IntPtr> _before = new();
-    private bool _ownerWasDisabled;
     private bool _seen;
     private bool _done;
 
-    public PropertiesDialog(Inventor.Application application, AssemblyDocument assembly, IntPtr owner)
+    public PropertiesDialog(Inventor.Application application, AssemblyDocument assembly)
     {
         _application = application;
         _assembly = assembly;
-        _owner = owner;
     }
 
     /// <summary>Выбирает вхождение и запускает команду. Ошибка — исключение с текстом для пользователя.</summary>
@@ -43,6 +40,16 @@ internal sealed class PropertiesDialog
         var command = FindCommand() ?? throw new InvalidOperationException(
             $"Команда Inventor «iProperties» не найдена (искались {string.Join(", ", IPropertiesCommands)}).\n" +
             $"Команды Inventor с «iProperties» в имени: {string.Join(", ", SimilarCommands())}");
+
+        // Окно спецификации немодальное: пока оно открыто, активным мог стать другой документ.
+        try
+        {
+            ((Document)_assembly).Activate();
+        }
+        catch (COMException ex)
+        {
+            Log.Error("iProperties: Activate", ex);
+        }
 
         var selectSet = _assembly.SelectSet;
         try
@@ -56,7 +63,6 @@ internal sealed class PropertiesDialog
                 $"Не удалось выбрать компонент в сборке: {ex.Message}\nСборка должна быть активным документом (не в режиме редактирования подсборки).", ex);
         }
 
-        _ownerWasDisabled = _owner != IntPtr.Zero && !IsWindowEnabled(_owner);
         _before = CaptionWindows();
         try
         {
@@ -111,15 +117,11 @@ internal sealed class PropertiesDialog
         return _seen ? InventorDialogState.Closed : InventorDialogState.Starting;
     }
 
-    /// <summary>Снимает выбор в сборке; главное окно Inventor снова отключено, пока открыто окно спецификации.</summary>
+    /// <summary>Снимает выбор в сборке.</summary>
     public void End()
     {
         _done = true;
         ClearSelection();
-        if (_ownerWasDisabled && IsWindowEnabled(_owner))
-        {
-            EnableWindow(_owner, false);
-        }
     }
 
     private Inventor.ControlDefinition? FindCommand()
@@ -229,11 +231,4 @@ internal sealed class PropertiesDialog
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetClassName(IntPtr hwnd, StringBuilder className, int maxCount);
 
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool IsWindowEnabled(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool EnableWindow(IntPtr hWnd, [MarshalAs(UnmanagedType.Bool)] bool enable);
 }

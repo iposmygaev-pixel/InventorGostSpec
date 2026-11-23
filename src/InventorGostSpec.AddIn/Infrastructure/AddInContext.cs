@@ -8,7 +8,11 @@ internal sealed class AddInContext
     {
         Application = application;
         Settings = new SettingsStore();
+        SpecificationWindows = new SpecificationWindows(application);
     }
+
+    /// <summary>Открытые (немодальные) окна спецификаций.</summary>
+    public SpecificationWindows SpecificationWindows { get; }
 
     public Inventor.Application Application { get; }
 

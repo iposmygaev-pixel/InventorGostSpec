@@ -50,9 +50,12 @@ public partial class SpecificationWindow : Window, IDialogService
         Closed += (_, _) => Dispatcher.UnhandledException -= OnUnhandledException;
     }
 
-    /// <summary>Открывает окно спецификации модально поверх окна Inventor.</summary>
+    /// <summary>
+    /// Создаёт окно спецификации. Окно немодальное (показывается <see cref="Window.Show"/>): пока оно открыто,
+    /// Inventor работает — выполняет свои команды (iProperties), можно выбирать и править модель.
+    /// </summary>
     /// <param name="isNew">Спецификация только что сформирована и ещё не сохранена в сборку.</param>
-    public static void ShowDialog(ISpecificationHost host, Specification specification, IntPtr ownerHandle, bool isNew)
+    public static SpecificationWindow Create(ISpecificationHost host, Specification specification, bool isNew)
     {
         var window = new SpecificationWindow(host);
         var viewModel = new SpecificationViewModel(
@@ -62,7 +65,46 @@ public partial class SpecificationWindow : Window, IDialogService
             isNew,
             action => window.Dispatcher.BeginInvoke(DispatcherPriority.Background, action));
         window.Attach(viewModel);
-        WindowOwner.ShowDialog(window, ownerHandle);
+        return window;
+    }
+
+    private bool _forceClose;
+
+    /// <summary>Выводит окно вперёд (повторное нажатие «Спецификация», когда окно уже открыто).</summary>
+    public void BringToFront()
+    {
+        if (WindowState == WindowState.Minimized)
+        {
+            WindowState = WindowState.Normal;
+        }
+
+        Activate();
+    }
+
+    /// <summary>
+    /// Сборка закрывается: окно без несохранённых изменений закрывается. Есть изменения — окно остаётся (выводится
+    /// вперёд с сообщением), возвращает <c>false</c>: закрытие сборки нужно отменить, иначе правки потеряются.
+    /// </summary>
+    public bool CloseForDocument()
+    {
+        Grid.CommitEdit(DataGridEditingUnit.Row, true);
+        if (_viewModel?.IsDirty == true)
+        {
+            BringToFront();
+            Warning("Спецификация не сохранена. Сохраните её (Ctrl+S) или закройте окно спецификации, затем закройте сборку.");
+            return false;
+        }
+
+        _forceClose = true;
+        Close();
+        return true;
+    }
+
+    /// <summary>Закрывает окно без вопросов (аддин выгружается).</summary>
+    public void ForceClose()
+    {
+        _forceClose = true;
+        Close();
     }
 
     public bool Confirm(string text) =>
@@ -176,7 +218,7 @@ public partial class SpecificationWindow : Window, IDialogService
     protected override void OnClosing(CancelEventArgs e)
     {
         Grid.CommitEdit(DataGridEditingUnit.Row, true);
-        if (_viewModel is not null && !_viewModel.CanClose())
+        if (!_forceClose && _viewModel is not null && !_viewModel.CanClose())
         {
             e.Cancel = true;
         }

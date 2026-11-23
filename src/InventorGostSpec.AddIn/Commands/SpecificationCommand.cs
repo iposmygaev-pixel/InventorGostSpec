@@ -33,6 +33,12 @@ internal sealed class SpecificationCommand : AddInCommand
             return;
         }
 
+        // Окно немодальное: если оно для этой сборки уже открыто — выводим его вперёд.
+        if (context.SpecificationWindows.TryActivate((Document)assembly))
+        {
+            return;
+        }
+
         var host = new InventorSpecificationHost(context, assembly);
         var specification = SpecificationStore.Load((Document)assembly, out var fromBackup);
         if (fromBackup)
@@ -52,7 +58,10 @@ internal sealed class SpecificationCommand : AddInCommand
         }
 
         // Восстановленную из копии спецификацию предлагаем сохранить при закрытии, как новую.
-        SpecificationWindow.ShowDialog(host, specification, context.MainWindowHandle, isNew || fromBackup);
+        context.SpecificationWindows.Show(
+            (Document)assembly,
+            SpecificationWindow.Create(host, specification, isNew || fromBackup),
+            context.MainWindowHandle);
     }
 
     private sealed class InventorSpecificationHost : ISpecificationHost
@@ -125,7 +134,7 @@ internal sealed class SpecificationCommand : AddInCommand
                 return null;
             }
 
-            _propertiesDialog = new PropertiesDialog(_context.Application, _assembly, _context.MainWindowHandle);
+            _propertiesDialog = new PropertiesDialog(_context.Application, _assembly);
             return _propertiesDialog.Open(item.Row);
         }
 

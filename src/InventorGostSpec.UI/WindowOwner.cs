@@ -15,4 +15,17 @@ public static class WindowOwner
 
         return window.ShowDialog();
     }
+
+    /// <summary>
+    /// Показывает окно немодально поверх главного окна Inventor (сворачивается вместе с ним, Inventor не блокируется).
+    /// </summary>
+    public static void Show(Window window, IntPtr ownerHandle)
+    {
+        if (ownerHandle != IntPtr.Zero)
+        {
+            new WindowInteropHelper(window).Owner = ownerHandle;
+        }
+
+        window.Show();
+    }
 }
