@@ -133,6 +133,29 @@ public class SpecificationViewModelTests
     }
 
     [Fact]
+    public void Inventor_iproperties_refresh_row_without_highlight()
+    {
+        var vm = Open();
+        vm.SelectedRow = RowByName(vm, "Корпус");
+        var key = vm.SelectedRow!.Row!.ComponentKey!;
+        Assert.True(vm.InventorPropertiesCommand.CanExecute(null));
+        _host.EditInInventor = c => { c.Name = "Корпус сварной"; c.Designation = "А.001-01"; };
+
+        vm.InventorPropertiesCommand.Execute(null);
+
+        Assert.Equal(new[] { key }, _host.InventorPropertiesCalls);
+        var row = vm.SelectedRow!;
+        Assert.Equal("Корпус сварной", row.Name);
+        Assert.Equal("А.001-01", row.Designation);
+        Assert.False(row.IsChanged);
+        Assert.True(vm.IsDirty);
+
+        // Текстовой строке и заголовку iProperties нет.
+        vm.SelectedRow = vm.Rows.First(r => r.IsHeader);
+        Assert.False(vm.InventorPropertiesCommand.CanExecute(null));
+    }
+
+    [Fact]
     public void Add_item_takes_reserve_position()
     {
         var vm = Open();

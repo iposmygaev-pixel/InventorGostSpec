@@ -36,6 +36,12 @@ public interface ISpecificationHost
     /// </summary>
     ComponentData WriteComponentProperties(string componentKey, IReadOnlyDictionary<string, string> changes);
 
+    /// <summary>
+    /// Открывает окно «iProperties» Inventor для компонента (как ПКМ → iProperties на компоненте в браузере сборки)
+    /// и после его закрытия возвращает свежие данные компонента. <c>null</c> — компонента нет в сборке.
+    /// </summary>
+    ComponentData? ShowInventorProperties(string componentKey);
+
     /// <summary>Раздел, который компонент получает автоматически, по типу (если SPEC_Section не задан).</summary>
     string GetAutoSectionId(string componentKey);
 

@@ -86,6 +86,7 @@ public sealed partial class SpecificationViewModel : ObservableObject
         InsertComponentNoteCommand = new RelayCommand(InsertComponentNote, () => TargetRows.Any(CanEditComponent));
         SetSortGroupCommand = new RelayCommand(SetSortGroup, p => p is string && TargetRows.Any(r => r.Kind != RowKind.Note));
         EditComponentCommand = new RelayCommand(EditComponent, () => TargetRows.Any(CanEditComponent));
+        InventorPropertiesCommand = new RelayCommand(ShowInventorProperties, () => CanEditComponent(SelectedRow?.Row));
         NextChangeCommand = new RelayCommand(GoToNextChange, () => Specification.Rows.Any(r => r.Status != RowStatus.None));
         ClearSearchCommand = new RelayCommand(() => SearchText = "", () => IsSearching);
         UndoCommand = new RelayCommand(Undo, () => _undo.Count > 0);
@@ -243,6 +244,9 @@ public sealed partial class SpecificationViewModel : ObservableObject
 
     /// <summary>Свойства компонента (раздел, формат, поля сортировки) — записываются в его iProperties.</summary>
     public ICommand EditComponentCommand { get; }
+
+    /// <summary>Окно «iProperties» Inventor для компонента выбранной строки.</summary>
+    public ICommand InventorPropertiesCommand { get; }
     public ICommand ClearSearchCommand { get; }
 
     /// <summary>
@@ -1373,6 +1377,39 @@ public sealed partial class SpecificationViewModel : ObservableObject
         {
             _dialogs.Warning($"Не удалось записать свойства ({failed.Count} из {rows.Count}):\n" + string.Join("\n", failed.Take(10)));
         }
+    }
+
+    /// <summary>
+    /// Открывает «iProperties» Inventor для компонента выбранной строки. После закрытия окна строка обновляется
+    /// по свежим свойствам (обозначение, наименование, SPEC_*), без подсветки — изменил сам пользователь.
+    /// </summary>
+    private void ShowInventorProperties()
+    {
+        if (SelectedRow?.Row is not { } row || !CanEditComponent(row))
+        {
+            return;
+        }
+
+        ComponentData? data;
+        try
+        {
+            data = _host.ShowInventorProperties(row.ComponentKey!);
+        }
+        catch (Exception ex)
+        {
+            _host.ReportError(ex);
+            _dialogs.Warning($"Не удалось открыть iProperties компонента «{Describe(row)}»:\n{ex.Message}");
+            return;
+        }
+
+        if (data is null)
+        {
+            _dialogs.Warning($"Компонент «{Describe(row)}» не найден в сборке. Обновите спецификацию из сборки.");
+            return;
+        }
+
+        SpecificationEditor.RefreshComponent(Specification, _context, row, data);
+        Changed(rebuild: true, selectRowId: row.Id);
     }
 
     /// <summary>Выделяет следующую подсвеченную строку (новую, изменённую или удалённую), по кругу.</summary>

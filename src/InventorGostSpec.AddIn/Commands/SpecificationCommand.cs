@@ -113,6 +113,25 @@ internal sealed class SpecificationCommand : AddInCommand
                 transaction.Commit();
             }
 
+            return ReadComponent(item);
+        }
+
+        public ComponentData? ShowInventorProperties(string componentKey)
+        {
+            if (FindItem(componentKey) is not { } item)
+            {
+                return null;
+            }
+
+            PropertiesDialog.Show(_context.Application, _assembly, item.Row, _context.MainWindowHandle);
+
+            // Свойства читаются заново: в окне могли поменять обозначение, наименование и свойства SPEC_*.
+            return FindItem(componentKey) is { } fresh ? ReadComponent(fresh) : null;
+        }
+
+        /// <summary>Свежие данные компонента (у сборки — с поиском её чертежа).</summary>
+        private ComponentData ReadComponent(BomItem item)
+        {
             var drawings = item.Target.Kind == ComponentKind.Assembly
                 ? new DrawingSearch(_context.Application, new[] { System.IO.Path.GetDirectoryName(item.Target.FullFileName ?? "") ?? "" })
                 : null;

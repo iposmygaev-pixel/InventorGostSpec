@@ -98,6 +98,23 @@ internal sealed class FakeHost : ISpecificationHost
 
     public string? GetComponentFile(string componentKey) => Files.TryGetValue(componentKey, out var file) ? file : null;
 
+    /// <summary>Что «пользователь» меняет в окне iProperties Inventor; вызовы — по ключу компонента.</summary>
+    public Action<ComponentData>? EditInInventor { get; set; }
+
+    public List<string> InventorPropertiesCalls { get; } = new();
+
+    public ComponentData? ShowInventorProperties(string componentKey)
+    {
+        InventorPropertiesCalls.Add(componentKey);
+        var component = Components.FirstOrDefault(c => c.Key == componentKey);
+        if (component is not null)
+        {
+            EditInInventor?.Invoke(component);
+        }
+
+        return component;
+    }
+
     public IReadOnlyDictionary<string, DrawingFormat> FindDrawingFormats(IReadOnlyList<string> componentKeys)
     {
         DrawingRequests.Add(componentKeys);

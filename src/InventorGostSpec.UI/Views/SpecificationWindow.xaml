@@ -360,6 +360,8 @@
                         <MenuItem Header="Свойства компонента…" InputGestureText="Alt+Enter" Command="{Binding EditComponentCommand}" FontWeight="SemiBold">
                             <MenuItem.Icon><Image Style="{StaticResource MenuIcon}" Source="{StaticResource Icon.Properties}" /></MenuItem.Icon>
                         </MenuItem>
+                        <MenuItem Header="iProperties Inventor…" Command="{Binding InventorPropertiesCommand}"
+                                  ToolTip="Открыть окно «iProperties» Inventor для компонента строки (как ПКМ на компоненте в браузере сборки). После закрытия строка обновится по свойствам компонента." />
                         <Separator />
                         <MenuItem Header="Добавить изделие" InputGestureText="Insert" Command="{Binding AddItemCommand}">
                             <MenuItem.Icon><Image Style="{StaticResource MenuIcon}" Source="{StaticResource Icon.AddItem}" /></MenuItem.Icon>
