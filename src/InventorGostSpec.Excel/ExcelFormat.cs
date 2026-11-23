@@ -50,6 +50,12 @@ public static class ExcelFormat
         /// <summary>Текстовая строка без позиции.</summary>
         public const string Text = "Текст";
 
+        /// <summary>
+        /// Текстовая строка в объединённых графах «Обозначение» и «Наименование» (текст — в «Обозначении»,
+        /// ячейки объединены; «Наименование», если заполнено, дописывается через пробел).
+        /// </summary>
+        public const string WideText = "Текст в две графы";
+
         /// <summary>Пустая строка резервной позиции.</summary>
         public const string Reserve = "Резерв";
 
@@ -59,7 +65,7 @@ public static class ExcelFormat
         /// <summary>Разрыв листа: следующие строки начинаются с нового листа.</summary>
         public const string PageBreak = "Новый лист";
 
-        public static readonly string[] All = { Group, Section, Item, Text, Reserve, Blank, PageBreak };
+        public static readonly string[] All = { Group, Section, Item, Text, WideText, Reserve, Blank, PageBreak };
     }
 
     /// <summary>Поля листа «Основная надпись» (колонка A — поле, B — значение).</summary>

@@ -125,6 +125,12 @@ public sealed class SpecRowViewModel : ObservableObject
 
     public bool IsNote => Kind == SpecRowKind.Note;
 
+    /// <summary>Текстовая строка в объединённых графах «Обозначение» и «Наименование».</summary>
+    public bool IsWideText => Row?.IsWideText == true;
+
+    /// <summary>Пометка в графе «Обозначение» у текста в объединённых графах (сам текст — в «Наименовании»).</summary>
+    public const string WideTextMarker = "⟷ объединена с «Наименованием»";
+
     public bool IsManual => Kind is SpecRowKind.ManualItem or SpecRowKind.Note;
 
     public bool IsNew => Row?.Status.HasFlag(RowStatus.New) == true;
@@ -149,7 +155,11 @@ public sealed class SpecRowViewModel : ObservableObject
         set => Set(SpecColumn.Position, value);
     }
 
-    public string Designation { get => Get(SpecColumn.Designation); set => Set(SpecColumn.Designation, value); }
+    public string Designation
+    {
+        get => IsWideText ? WideTextMarker : Get(SpecColumn.Designation);
+        set => Set(SpecColumn.Designation, value);
+    }
 
     public string Name
     {
@@ -243,6 +253,12 @@ public sealed class SpecRowViewModel : ObservableObject
                 tips.Add(Row!.ReplacesKey is not null
                     ? $"Составная часть исполнения (из сборки-исполнения; правятся формат, зона и примечание). Заменяет поз. {Row.Position}."
                     : "Составная часть исполнения (из сборки-исполнения; правятся формат, зона и примечание).");
+            }
+
+            if (IsWideText && column is SpecColumn.Designation or SpecColumn.Name)
+            {
+                tips.Add("Текст в объединённых графах «Обозначение» и «Наименование» (в Excel и PDF — без линии между ними).\n" +
+                         "Разделить — снять «Объединить «Обозначение» и «Наименование»» в контекстном меню.");
             }
 
             if (IsRemoved && column == SpecColumn.Name)

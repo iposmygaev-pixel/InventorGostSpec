@@ -128,6 +128,9 @@ public static class ExcelExporter
                 return new SheetRow(ExcelFormat.RowTypes.Section, "", "", "", "", display.SectionName, "", "", "");
             case DisplayRowKind.Reserve:
                 return new SheetRow(ExcelFormat.RowTypes.Reserve, "", "", display.ReservedPosition?.ToString() ?? "", "", "", "", "", "");
+            case DisplayRowKind.Row when display.Row is { IsWideText: true } wide:
+                // Текст в объединённых графах «Обозначение» и «Наименование»: в файле — в «Обозначении», ячейки объединены.
+                return new SheetRow(ExcelFormat.RowTypes.WideText, "", "", "", wide.Get(SpecColumn.Name), "", "", "", "");
             case DisplayRowKind.Row when display.Row is { Kind: RowKind.Note } note:
                 return new SheetRow(ExcelFormat.RowTypes.Text, "", "", "", "", note.Get(SpecColumn.Name), "", "", "");
             case DisplayRowKind.Row when display.Row is { } item:
@@ -191,6 +194,11 @@ public static class ExcelExporter
             case DisplayRowKind.Reserve:
                 range.Style.Font.FontColor = MutedFont;
                 break;
+        }
+
+        if (values.Type == ExcelFormat.RowTypes.WideText)
+        {
+            sheet.Range(row, ExcelFormat.DesignationColumn, row, ExcelFormat.NameColumn).Merge();
         }
     }
 
@@ -302,6 +310,8 @@ public static class ExcelExporter
             "  Раздел — заголовок раздела: «Документация», «Детали» и т. д. (в «Наименовании», будет подчёркнут);",
             "  Изделие — обычная строка: формат, зона, позиция, обозначение, наименование, количество, примечание;",
             "  Текст — строка текста без позиции (в «Наименовании»);",
+            "  Текст в две графы — строка текста в объединённых графах «Обозначение» и «Наименование», без линии между ними",
+            "    (текст — в «Обозначении», ячейки объединены): например, «Примечания: 1 Звено поз. 50 допускается заменять …»;",
             "  Резерв — свободная строка резервной позиции (номер позиции для справки, в PDF не выводится);",
             "  Пустая — пустая строка, добавленная вручную: например, чтобы сдвинуть запись на следующий лист;",
             "  Новый лист — следующие строки начинаются с нового листа PDF (сама строка не выводится).",

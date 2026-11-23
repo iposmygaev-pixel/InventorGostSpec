@@ -18,6 +18,11 @@ public sealed record SheetRow(
 {
     public bool IsEmpty =>
         new[] { Format, Zone, Position, Designation, Name, Quantity, Unit, Note }.All(v => v.Length == 0);
+
+    /// <summary>
+    /// Текст строки «Текст в две графы»: «Обозначение» (объединённая ячейка) и, если заполнено, «Наименование».
+    /// </summary>
+    public string WideText => string.Join(" ", new[] { Designation.Trim(), Name.Trim() }.Where(v => v.Length > 0).Distinct());
 }
 
 /// <summary>Содержимое файла Excel спецификации: строки, основная надпись и изменения.</summary>

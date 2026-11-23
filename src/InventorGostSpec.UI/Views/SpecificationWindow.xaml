@@ -426,6 +426,9 @@
                         <MenuItem Header="Начинать с нового листа" IsCheckable="True" IsChecked="{Binding SelectedStartsNewPage}"
                                   Visibility="{Binding CanSetNewPage, Converter={StaticResource BoolToVisibility}}"
                                   ToolTip="Раздел или группа «устанавливаемые по …» в PDF начинается с нового листа (в Excel — строка «Новый лист» перед заголовком). Граница листа видна в таблице синей линией." />
+                        <MenuItem Header="Объединить «Обозначение» и «Наименование»" IsCheckable="True" IsChecked="{Binding SelectedWideText}"
+                                  Visibility="{Binding CanSetWideText, Converter={StaticResource BoolToVisibility}}"
+                                  ToolTip="Текст выбранных текстовых строк — в объединённых графах «Обозначение» и «Наименование», без линии между ними (в Excel и PDF). Например, «Примечания: 1 Звено поз. 50 допускается заменять …»." />
                         <MenuItem Header="Удалить группу" Command="{Binding DeleteGroupCommand}" />
                         <MenuItem Header="Убрать пустой раздел" Command="{Binding HideSectionCommand}"
                                   ToolTip="Убрать вставленный раздел, в котором нет строк (выберите его заголовок)" />

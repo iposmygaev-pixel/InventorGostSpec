@@ -297,6 +297,32 @@ public class VersionTests
         // Переменные данные основного исполнения, которых нет в -01, — нет.
         Assert.False(positions.ContainsKey("АГБВ.686189.349-08.iam"));
     }
+
+    [Fact]
+    public void Section_of_version_with_only_inherited_numbers_gets_its_own_reserve()
+    {
+        // В -01 «Сборочные единицы» — только щит АГБВ.686243.185 с номером основного исполнения.
+        var (spec, context, version) = Build();
+        version.Reserves[SectionIds.AssemblyUnits] = new ReserveSettings { Count = 2 };
+        PositionAllocator.RenumberAll(spec, context);
+        var shield = Row(spec, "АГБВ.686243.185", version.Id);
+        Assert.True(shield.InheritsPosition);
+        Assert.Equal(SectionIds.AssemblyUnits, shield.SectionId);
+        spec.Rows.RemoveAll(r => r.GroupId == version.Id && r.SectionId == SectionIds.AssemblyUnits && r != shield);
+        PositionAllocator.RenumberAll(spec, context);
+
+        var reserved = PositionAllocator.GetReservedNumbers(spec, context, version.Id, SectionIds.AssemblyUnits);
+        Assert.Equal(2, reserved.Count);
+        Assert.Equal(2, SpecificationViewBuilder.Build(spec, context)
+            .Count(r => r.Kind == DisplayRowKind.Reserve && r.GroupId == version.Id && r.SectionId == SectionIds.AssemblyUnits));
+        Assert.DoesNotContain(spec.Rows, r => r.Position is { } p && reserved.Contains(p));
+
+        // Новая строка раздела получает номер из этого резерва.
+        var item = Editing.SpecificationEditor.AddManualItem(spec, context,
+            new ComponentSnapshot { SectionId = SectionIds.AssemblyUnits, Designation = "АГБВ.000000.001", Name = "Новая" },
+            shield.Id, version.Id);
+        Assert.Equal(reserved[0], item.Position);
+    }
 }
 
 public class VariableDataSwitchTests

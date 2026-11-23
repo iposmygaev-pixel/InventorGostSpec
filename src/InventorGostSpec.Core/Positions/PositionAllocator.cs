@@ -44,8 +44,9 @@ public static class PositionAllocator
             var reserve = context.GetReserve(block.GroupId, block.Section.Id);
             if (rows.Count == 0)
             {
-                // Пустой вставленный раздел: под него отводится только его резерв.
-                if (SpecBlocks.IsShownWhenEmpty(spec, block))
+                // Пустой вставленный раздел или раздел исполнения, все строки которого наследуют номера основного
+                // исполнения: под него отводится только его резерв.
+                if (HasOwnReserve(spec, block))
                 {
                     if (!first)
                     {
@@ -206,7 +207,7 @@ public static class PositionAllocator
         var used = spec.Rows.Where(r => r.Position.HasValue).Select(r => r.Position!.Value).ToHashSet();
         var segments = NumberedBlocks(spec, context)
             .Select(b => (Block: b, Positions: BlockRows(spec, b).Where(r => r.Position.HasValue).Select(r => r.Position!.Value).ToList()))
-            .Where(s => s.Positions.Count > 0 || SpecBlocks.IsShownWhenEmpty(spec, s.Block))
+            .Where(s => s.Positions.Count > 0 || HasOwnReserve(spec, s.Block))
             .ToList();
 
         List<int> Free(int from, int to) =>
@@ -264,6 +265,12 @@ public static class PositionAllocator
 
         return result;
     }
+
+    /// <summary>
+    /// Раздел без своих номеров позиций, которому всё равно отводится резерв: вставленный вручную или раздел со
+    /// строками без своих номеров (в исполнении — составные части, наследующие номер основного исполнения).
+    /// </summary>
+    private static bool HasOwnReserve(Specification spec, SpecBlock block) => SpecBlocks.IsVisible(spec, block);
 
     private static string Key(SpecBlock block) => Key(block.GroupId, block.Section.Id);
 

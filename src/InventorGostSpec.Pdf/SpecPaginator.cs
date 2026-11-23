@@ -27,8 +27,9 @@ public sealed class PrintLine
     public LineStyle Style { get; init; }
 
     /// <summary>
-    /// «Переменные данные для исполнений:»: графы «Обозначение» и «Наименование» в этой строке объединяются —
-    /// без линии между ними, текст одной строкой по центру. Остальные заголовки переносятся внутри «Наименования».
+    /// Графы «Обозначение» и «Наименование» в этой строке объединяются — без линии между ними, текст в <see cref="Name"/>.
+    /// «Переменные данные для исполнений:» — одной строкой по центру (остальные заголовки переносятся внутри
+    /// «Наименования»); строки «Текст в две графы» — от левого края «Обозначения».
     /// </summary>
     public bool Wide { get; init; }
 
@@ -189,6 +190,7 @@ public static class SpecPaginator
     {
         var type = row.Type.Length > 0 ? row.Type : row.IsEmpty ? "" : ExcelFormat.RowTypes.Item;
         var nameWidth = GostLayout.TextWidth(GostLayout.NameColumn);
+        var wideWidth = GostLayout.ColumnWidths[GostLayout.DesignationColumn] + GostLayout.ColumnWidths[GostLayout.NameColumn] - 2 * GostLayout.Padding;
         switch (type)
         {
             case ExcelFormat.RowTypes.Section:
@@ -197,7 +199,6 @@ public static class SpecPaginator
                 var style = type == ExcelFormat.RowTypes.Section ? LineStyle.Section : LineStyle.Group;
                 var lines = new List<PrintLine> { PrintLine.Spacer };
                 var wrapped = wrap(row.Name, nameWidth);
-                var wideWidth = GostLayout.ColumnWidths[GostLayout.DesignationColumn] + GostLayout.ColumnWidths[GostLayout.NameColumn] - 2 * GostLayout.Padding;
                 // «Переменные данные для исполнений:» — всегда в объединённых графах «Обозначение» и «Наименование».
                 var variableData = row.Name.Trim() == Core.Versions.VersionSync.VariableDataTitle;
                 if (variableData && wrap(row.Name, wideWidth) is { Count: 1 } wide)
@@ -217,12 +218,17 @@ public static class SpecPaginator
             case ExcelFormat.RowTypes.Text when row.Name.Trim().Length > 0:
                 return new Block(wrap(row.Name, nameWidth).Select(text => new PrintLine { Name = text }).ToList(), false);
 
+            // Текст в объединённых графах «Обозначение» и «Наименование» — переносится по их общей ширине.
+            case ExcelFormat.RowTypes.WideText when row.WideText.Length > 0:
+                return new Block(wrap(row.WideText, wideWidth).Select(text => new PrintLine { Name = text, Wide = true }).ToList(), false);
+
             case ExcelFormat.RowTypes.PageBreak:
                 return new Block(new List<PrintLine>(), false, PageBreak: true);
 
             // Резерв — просто свободная строка, номер позиции не печатается.
             case "":
             case ExcelFormat.RowTypes.Text:
+            case ExcelFormat.RowTypes.WideText:
             case ExcelFormat.RowTypes.Blank:
             case ExcelFormat.RowTypes.Reserve:
                 return new Block(new List<PrintLine> { PrintLine.Blank }, false);

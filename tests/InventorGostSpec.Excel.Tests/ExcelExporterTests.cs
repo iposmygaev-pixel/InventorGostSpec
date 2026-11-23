@@ -20,6 +20,41 @@ public class ExcelExporterTests : IDisposable
     }
 
     [Fact]
+    public void Wide_text_is_written_to_merged_designation_and_name_and_read_back()
+    {
+        var spec = new Specification();
+        var context = SpecificationContext.Create(new SpecSettings(), spec);
+        SpecificationUpdater.Update(spec, new[]
+        {
+            new ComponentData { Key = "a.ipt", Kind = ComponentKind.Part, Designation = "АБВГ.715431.001", Name = "Корпус", Quantity = 1 },
+        }, context, DateTime.UtcNow);
+        var body = spec.Rows.Single();
+        var note = SpecificationEditor.AddNote(spec, context, SectionIds.Parts, "Примечания: 1 Звено поз. 50 допускается заменять", body.Id);
+        note.WideText = true;
+        SpecificationEditor.AddNote(spec, context, SectionIds.Parts, "Обычный текст", note.Id);
+
+        ExcelExporter.Export(spec, context, new TitleBlock(), _path);
+
+        using (var workbook = new XLWorkbook(_path))
+        {
+            var sheet = workbook.Worksheet(ExcelFormat.SpecificationSheet);
+            var row = Enumerable.Range(2, sheet.LastRowUsed()!.RowNumber() - 1)
+                .Single(r => sheet.Cell(r, ExcelFormat.TypeColumn).GetString() == ExcelFormat.RowTypes.WideText);
+            Assert.Equal("Примечания: 1 Звено поз. 50 допускается заменять", sheet.Cell(row, ExcelFormat.DesignationColumn).GetString());
+            Assert.True(sheet.Cell(row, ExcelFormat.DesignationColumn).IsMerged());
+            Assert.Equal(
+                $"{sheet.Cell(row, ExcelFormat.DesignationColumn).Address}:{sheet.Cell(row, ExcelFormat.NameColumn).Address}",
+                sheet.Cell(row, ExcelFormat.NameColumn).MergedRange().RangeAddress.ToString());
+            Assert.False(sheet.Cell(row + 1, ExcelFormat.DesignationColumn).IsMerged());
+        }
+
+        var rows = ExcelReader.Read(_path).Rows;
+        var wide = rows.Single(r => r.Type == ExcelFormat.RowTypes.WideText);
+        Assert.Equal("Примечания: 1 Звено поз. 50 допускается заменять", wide.WideText);
+        Assert.Equal("Обычный текст", rows.Single(r => r.Type == ExcelFormat.RowTypes.Text).Name);
+    }
+
+    [Fact]
     public void Exports_rows_with_types_values_and_title_block()
     {
         var spec = new Specification();

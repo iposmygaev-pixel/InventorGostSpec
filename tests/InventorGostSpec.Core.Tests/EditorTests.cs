@@ -197,6 +197,7 @@ public class SerializerTests
         SpecificationEditor.SetCell(spec, context, row, SpecColumn.Format, "А3");
         spec.ReserveOverrides[SectionIds.Parts] = new ReserveSettings { Count = 3, RoundStartTo = 10 };
         spec.CustomSections.Add(new SectionDefinition { Id = "Custom", Name = "Свой", Order = 900 });
+        SpecificationEditor.AddNote(spec, context, SectionIds.Parts, "Примечания:", row.Id).WideText = true;
 
         var json = SpecificationSerializer.Serialize(spec);
         var copy = SpecificationSerializer.Deserialize(json);
@@ -206,6 +207,8 @@ public class SerializerTests
         Assert.Equal("А3", copy.Rows[0].Get(SpecColumn.Format));
         Assert.Equal("Примечание", copy.Rows[0].Note);
         Assert.Equal(3, copy.ReserveOverrides[SectionIds.Parts].Count);
+        Assert.True(copy.Rows.Single(r => r.Kind == RowKind.Note).IsWideText);
+        Assert.False(copy.Rows[0].WideText);
         Assert.Equal(TestData.Now, copy.LastUpdatedUtc);
     }
 

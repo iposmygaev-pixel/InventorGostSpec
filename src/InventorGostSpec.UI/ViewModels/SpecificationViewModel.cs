@@ -134,6 +134,8 @@ public sealed partial class SpecificationViewModel : ObservableObject
         _selectedRows = rows.OrderBy(r => Rows.IndexOf(r)).ToList();
         UpdateGroupOptions();
         UpdateStatus();
+        OnPropertyChanged(nameof(CanSetWideText));
+        OnPropertyChanged(nameof(SelectedWideText));
         OnPropertyChanged(nameof(CanSetDocumentType));
         OnPropertyChanged(nameof(CanAddExternalDocument));
         OnPropertyChanged(nameof(IsDocumentSelected));
@@ -168,6 +170,8 @@ public sealed partial class SpecificationViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsNotDocumentSelected));
                 OnPropertyChanged(nameof(CanSetNewPage));
                 OnPropertyChanged(nameof(SelectedStartsNewPage));
+                OnPropertyChanged(nameof(CanSetWideText));
+                OnPropertyChanged(nameof(SelectedWideText));
                 OnPropertyChanged(nameof(ReplacesOptions));
                 UpdateGroupOptions();
                 OnPropertyChanged(nameof(IsVersionItemSelected));
@@ -290,6 +294,40 @@ public sealed partial class SpecificationViewModel : ObservableObject
             Specification.SetStartsNewPage(header.GroupId, header.IsGroupHeader ? "" : header.SectionId, value);
             Changed(rebuild: true);
             OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Выбранные текстовые строки (все выбранные, если их несколько, иначе текущая).</summary>
+    private List<SpecRow> SelectedNotes() =>
+        (_selectedRows.Count > 1 ? _selectedRows : SelectedRow is null ? new List<SpecRowViewModel>() : new List<SpecRowViewModel> { SelectedRow })
+        .Where(r => r.IsNote && r.Row is not null)
+        .Select(r => r.Row!)
+        .ToList();
+
+    /// <summary>Выбрана текстовая строка — можно объединить графы «Обозначение» и «Наименование».</summary>
+    public bool CanSetWideText => SelectedNotes().Count > 0;
+
+    /// <summary>
+    /// Текст выбранных текстовых строк — в объединённых графах «Обозначение» и «Наименование» (в окне, Excel и PDF):
+    /// без линии между графами, текст от левого края «Обозначения». По умолчанию выключено.
+    /// </summary>
+    public bool SelectedWideText
+    {
+        get => SelectedNotes() is { Count: > 0 } notes && notes.All(r => r.WideText);
+        set
+        {
+            var notes = SelectedNotes();
+            if (notes.Count == 0 || notes.All(r => r.WideText == value))
+            {
+                return;
+            }
+
+            notes.ForEach(r => r.WideText = value);
+            Changed(rebuild: true, notes[0].Id);
+            OnPropertyChanged();
+            StatusText = value
+                ? $"Графы «Обозначение» и «Наименование» объединены (строк: {notes.Count})."
+                : $"Графы «Обозначение» и «Наименование» разделены (строк: {notes.Count}).";
         }
     }
 

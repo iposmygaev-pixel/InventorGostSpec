@@ -16,6 +16,7 @@ public partial class SpecificationWindow : Window, IDialogService
 
     private static readonly Brush OverriddenBrush = new SolidColorBrush(Color.FromRgb(0x1D, 0x4E, 0xD8));
     private static readonly Brush HandleBrush = new SolidColorBrush(Color.FromRgb(0x6B, 0x72, 0x80));
+    private static readonly Brush MutedBrush = new SolidColorBrush(Color.FromRgb(0x9C, 0xA3, 0xAF));
 
     private readonly ISpecificationHost _host;
     private SpecificationViewModel? _viewModel;
@@ -299,6 +300,15 @@ public partial class SpecificationWindow : Window, IDialogService
         overridden.Setters.Add(new Setter(TextBlock.ForegroundProperty, OverriddenBrush));
         overridden.Setters.Add(new Setter(TextBlock.FontStyleProperty, FontStyles.Italic));
         style.Triggers.Add(overridden);
+
+        if (column == SpecColumn.Designation)
+        {
+            // Текст в объединённых графах: в «Обозначении» — серая пометка, сам текст — в «Наименовании».
+            var wide = new DataTrigger { Binding = new Binding(nameof(SpecRowViewModel.IsWideText)), Value = true };
+            wide.Setters.Add(new Setter(TextBlock.ForegroundProperty, MutedBrush));
+            wide.Setters.Add(new Setter(TextBlock.FontStyleProperty, FontStyles.Italic));
+            style.Triggers.Add(wide);
+        }
 
         if (column is SpecColumn.Designation or SpecColumn.Name)
         {

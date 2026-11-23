@@ -106,6 +106,33 @@ public class SpecificationViewModelTests
     }
 
     [Fact]
+    public void Note_text_can_span_designation_and_name_and_be_undone()
+    {
+        var vm = Open();
+        vm.SelectedRow = RowByName(vm, "Корпус");
+        Assert.False(vm.CanSetWideText);
+        vm.AddNoteCommand.Execute(null);
+        vm.SelectedRow!.Name = "Примечания:";
+        var noteId = vm.SelectedRow.RowId;
+
+        Assert.True(vm.CanSetWideText);
+        Assert.False(vm.SelectedWideText);
+        vm.SelectedWideText = true;
+
+        var note = vm.Rows.Single(r => r.RowId == noteId);
+        Assert.Same(note, vm.SelectedRow);
+        Assert.True(vm.SelectedWideText);
+        Assert.True(note.IsWideText);
+        Assert.Equal(SpecRowViewModel.WideTextMarker, note.Designation);
+        Assert.Equal("Примечания:", note.Name);
+        Assert.False(note.CanEdit(SpecColumn.Designation));
+        Assert.True(vm.Specification.FindRow(noteId!)!.WideText);
+
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.Specification.FindRow(noteId!)!.WideText);
+    }
+
+    [Fact]
     public void Add_item_takes_reserve_position()
     {
         var vm = Open();

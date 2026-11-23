@@ -31,6 +31,37 @@ public class PaginatorTests
     }
 
     [Fact]
+    public void Wide_text_spans_designation_and_name_columns()
+    {
+        // 50 символов = 100 мм: в «Наименование» (61 мм) — две строки, в объединённые графы (131 мм) — одна.
+        var text = "1 Звено поз. 50 допускается заменять аналогом ISO";
+        var wide = new SheetRow(ExcelFormat.RowTypes.WideText, "", "", "", text, "", "", "", "");
+
+        var line = Assert.Single(Assert.Single(SpecPaginator.Paginate(new[] { wide }, Measure)));
+        Assert.True(line.Wide);
+        Assert.Equal(LineStyle.Normal, line.Style);
+        Assert.Equal(text, line.Name);
+        Assert.Equal("", line.Designation);
+
+        var plain = Assert.Single(SpecPaginator.Paginate(new[] { new SheetRow(ExcelFormat.RowTypes.Text, "", "", "", "", text, "", "", "") }, Measure));
+        Assert.Equal(2, plain.Count);
+        Assert.All(plain, l => Assert.False(l.Wide));
+
+        // Длинный текст переносится по общей ширине граф, каждая строка — в объединённых графах.
+        // «Наименование», заполненное в Excel вручную, дописывается через пробел.
+        var lines = Assert.Single(SpecPaginator.Paginate(new[] { wide with { Name = "аналогом: цепь 08B-1 DONGHUA ISO 606." } }, Measure));
+        Assert.Equal(2, lines.Count);
+        Assert.StartsWith(text + " аналогом:", lines[0].Name);
+        Assert.EndsWith("DONGHUA ISO 606.", lines[1].Name);
+        Assert.All(lines, l => Assert.True(l.Wide));
+
+        // Без текста — свободная строка.
+        var page = Assert.Single(SpecPaginator.Paginate(new[] { wide with { Designation = "" }, Item("Корпус") }, Measure));
+        Assert.True(page[0].IsBlank);
+        Assert.False(page[0].Wide);
+    }
+
+    [Fact]
     public void Reserve_rows_are_free_lines_without_position()
     {
         var reserve = new SheetRow(ExcelFormat.RowTypes.Reserve, "", "", "3", "", "", "", "", "");

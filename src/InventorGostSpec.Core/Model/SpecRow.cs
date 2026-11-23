@@ -88,6 +88,16 @@ public sealed class SpecRow
     /// <summary>Примечание. Хранится только в спецификации, не в компоненте.</summary>
     public string Note { get; set; } = "";
 
+    /// <summary>
+    /// Текстовая строка в объединённых графах «Обозначение» и «Наименование» (без линии между ними), например
+    /// «Примечания: 1 Звено поз. 50 допускается заменять …». Только у текстовых строк.
+    /// </summary>
+    public bool WideText { get; set; }
+
+    /// <summary>Текстовая строка выводится в объединённых графах «Обозначение» и «Наименование».</summary>
+    [JsonIgnore]
+    public bool IsWideText => Kind == RowKind.Note && WideText;
+
     public RowStatus Status { get; set; }
 
     /// <summary>
