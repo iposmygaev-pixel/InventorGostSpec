@@ -16,9 +16,10 @@ namespace InventorGostSpec.AddIn.InventorApi;
 internal sealed class PropertiesDialog
 {
     /// <summary>
-    /// Внутренние имена команды Inventor «iProperties», по порядку: в среде сборки (ПКМ на компоненте) и общая.
+    /// Внутренние имена команды Inventor «iProperties», по порядку. AppiPropertiesWrapperCmd — iProperties выбранного
+    /// (ПКМ на компоненте); AssemblyiPropertiesCmd — iProperties самой сборки, только если первой нет.
     /// </summary>
-    private static readonly string[] IPropertiesCommands = { "AssemblyiPropertiesCmd", "AppiPropertiesWrapperCmd" };
+    private static readonly string[] IPropertiesCommands = { "AppiPropertiesWrapperCmd", "AssemblyiPropertiesCmd" };
 
     private readonly Inventor.Application _application;
     private readonly AssemblyDocument _assembly;
@@ -44,7 +45,12 @@ internal sealed class PropertiesDialog
         // Окно спецификации немодальное: пока оно открыто, активным мог стать другой документ.
         try
         {
-            ((Document)_assembly).Activate();
+            var assembly = (Document)_assembly;
+            if (_application.ActiveDocument is not Document active || !ReferenceEquals(active, assembly) &&
+                !string.Equals(active.FullFileName, assembly.FullFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                assembly.Activate();
+            }
         }
         catch (COMException ex)
         {
@@ -131,7 +137,9 @@ internal sealed class PropertiesDialog
         {
             try
             {
-                return definitions[name];
+                var definition = definitions[name];
+                Log.Info("iProperties", $"Команда {name}");
+                return definition;
             }
             catch (COMException ex)
             {
